@@ -1,0 +1,10 @@
+{
+  "description": "A unified platform for students offering housing rentals, carpooling, maintenance services, and complaint management to simplify daily campus life.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
