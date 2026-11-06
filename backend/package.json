@@ -1,0 +1,7 @@
+{
+  "name": "studenthub-mail-server",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node welcome_mail_server.mjs", "seed:demo": "node seed_demo.mjs" },
+  "dependencies": { "nodemailer": "^7.0.3" }
+}
