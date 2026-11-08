@@ -1,0 +1,5 @@
+{
+    "java.compile.nullAnalysis.mode": "automatic",
+    "dart.flutterSdkPath": "${workspaceFolder}/.tools/flutter",
+    "flutter.sdkPath": "${workspaceFolder}/.tools/flutter"
+}
