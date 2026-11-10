@@ -95,7 +95,7 @@ class _ComplaintsMapScreenState extends State<ComplaintsMapScreen> {
                 const SizedBox(height: 14),
                 Text(_total == 0 ? 'Localisation des adresses…' : 'Localisation des adresses… $_faites/$_total'),
                 const SizedBox(height: 4),
-                const Text('Une adresse par seconde (règle d’OpenStreetMap).', style: TextStyle(fontSize: 11, color: Color(0xFF647995))),
+                const Text('Une adresse par seconde (règle d’OpenStreetMap).', style: TextStyle(fontSize: 11, color: Color(0xFF66748A))),
               ],
             ),
           );
@@ -197,7 +197,7 @@ class _ComplaintsMapScreenState extends State<ComplaintsMapScreen> {
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
           children: [
             Text(titre, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
-            Text('${reclamations.length} réclamation(s)', style: const TextStyle(fontSize: 12, color: Color(0xFF647995))),
+            Text('${reclamations.length} réclamation(s)', style: const TextStyle(fontSize: 12, color: Color(0xFF66748A))),
             const SizedBox(height: 8),
             for (final reclamation in reclamations)
               ListTile(
@@ -245,7 +245,7 @@ class _Pastille extends StatelessWidget {
         decoration: BoxDecoration(
           color: _couleur(batiment.priorite),
           shape: BoxShape.circle,
-          border: Border.all(color: incident ? const Color(0xFF172B45) : Colors.white, width: incident ? 3 : 2),
+          border: Border.all(color: incident ? const Color(0xFF14263F) : Colors.white, width: incident ? 3 : 2),
           boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 6, offset: Offset(0, 2))],
         ),
         alignment: Alignment.center,

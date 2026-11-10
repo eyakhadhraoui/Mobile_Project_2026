@@ -47,6 +47,11 @@ app.*.map.json
 # Private transactional email credentials
 backend/.env
 backend/data/
+backend/node_modules/
 
 # Widget Preview related
 .widget_preview/
+
+.tools/
+build/
+.dart_tool/

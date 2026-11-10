@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import '../models/annonce.dart';
 import 'api_client.dart';
@@ -55,12 +56,36 @@ class AnnonceService {
     return _annonce(await _api.post('/annonces', payload));
   }
 
+  /// Annonce créée sans connexion : son identifiant est envoyé au serveur, qui
+  /// ne la crée qu'une fois même si la requête est rejouée.
+  Future<Annonce> ajouterDepuisFile(Annonce annonce) async {
+    final payload = annonce.copyWith(photos: await _envoyerPhotos(annonce.photos)).toPayload()
+      ..['legacyId'] = annonce.id;
+    return _annonce(await _api.post('/annonces', payload));
+  }
+
   Future<Annonce> modifier(Annonce annonce) async {
     final payload = annonce.copyWith(photos: await _envoyerPhotos(annonce.photos)).toPayload();
     return _annonce(await _api.put('/annonces/${annonce.id}', payload));
   }
 
   Future<void> supprimer(String id) => _api.delete('/annonces/$id');
+
+  /// Cherche si la photo correspond à une image déjà publiée par un autre compte.
+  /// Sans réponse, null : le serveur revérifie de toute façon à la publication.
+  Future<CorrespondancePhoto?> verifierPhoto(String chemin) async {
+    try {
+      final octets = await File(chemin).readAsBytes();
+      final reponse = await _api.send('POST', '/photos/verifier', bytes: octets);
+      final trouvee = (reponse.data as Map)['correspondance'];
+      return trouvee is Map ? CorrespondancePhoto.fromJson(trouvee) : null;
+    } on ApiException {
+      return null;
+    } on FileSystemException {
+      return null;
+    }
+  }
+
 
   Future<Annonce> changerStatut(String id, StatutAnnonce statut, {String motif = ''}) async =>
       _annonce(await _api.post('/annonces/$id/statut', {'statut': statut.name, 'motif': motif}));
@@ -78,7 +103,7 @@ class AnnonceService {
 
   Future<Annonce> noter(String id, int note) async => _annonce(await _api.post('/annonces/$id/avis', {'note': note}));
 
-  Future<List<CommentaireAnnonce>> commentaires(String id) async => _commentaires(await _api.get('/annonces/$id/interactions'));
+  Future<List<CommentaireAnnonce>> commentaires(String id) async => _commentaires(await _api.getAvecCache('/annonces/$id/interactions'));
 
   Future<void> aimer(String id, bool aime) => _api.post('/annonces/$id/interactions', {'action': 'like', 'liked': aime});
 

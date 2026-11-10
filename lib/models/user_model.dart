@@ -34,7 +34,8 @@ class UserModel {
   final String langue;
 
   /// Copie avec de nouvelles préférences (université choisie, options…).
-  UserModel copyWith({Map<String, dynamic>? preferences}) => UserModel(
+  UserModel copyWith({Map<String, dynamic>? preferences, String? photo}) =>
+      UserModel(
     id: id,
     nom: nom,
     prenom: prenom,
@@ -42,7 +43,7 @@ class UserModel {
     telephone: telephone,
     rolePrincipal: rolePrincipal,
     roleSecondaire: roleSecondaire,
-    photo: photo,
+    photo: photo ?? this.photo,
     preferences: preferences ?? this.preferences,
     emailVerified: emailVerified,
     accountStatus: accountStatus,

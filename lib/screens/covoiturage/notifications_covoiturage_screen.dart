@@ -1,0 +1,6 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../providers/covoiturage_provider.dart';
+import '../../providers/notification_covoiturage_provider.dart';
+import 'trajet_detail_screen.dart';
+class NotificationsCovoiturageScreen extends StatelessWidget { const NotificationsCovoiturageScreen({super.key}); @override Widget build(BuildContext context){final p=context.watch<CovoiturageProvider>();final n=context.watch<NotificationCovoiturageProvider>();final id=p.compte!.id;return Scaffold(appBar:AppBar(title:const Text('Notifications Covoiturage'),actions:[TextButton(onPressed:()=>n.toutLire(id),child:const Text('Tout lire'))]),body:n.notifications.isEmpty?const Center(child:Text('Aucune notification')):ListView.builder(itemCount:n.notifications.length,itemBuilder:(_,i){final x=n.notifications[i];return ListTile(leading:Badge(isLabelVisible:!x.lue,child:Icon(x.type.name=='alerteTrajet'?Icons.notification_important_outlined:Icons.notifications_outlined)),title:Text(x.titre),subtitle:Text(x.message),onTap:()async{await n.lire(x.id,id);if(context.mounted&&x.trajetId!=null)Navigator.push(context,MaterialPageRoute(builder:(_)=>TrajetDetailScreen(trajetId:x.trajetId!)));});}));} }

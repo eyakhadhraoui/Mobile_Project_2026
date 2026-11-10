@@ -187,6 +187,23 @@ void main() {
       Annonce(id: 'avis', categorie: 'Avis', titre: 'Coupure', description: 'd', statut: StatutAnnonce.publiee, proprietaireId: 'x'),
     ];
 
+    test('le point choisi sur la carte passe avant l’adresse saisie', () async {
+      final trajets = provider(serveurs(introuvables: {'Nulle part, Tunis'}));
+      addTearDown(trajets.dispose);
+      final placee = Annonce.fromJson({
+        ..._logement('placee', adresse: 'Nulle part').toJson(),
+        'lat': 36.84,
+        'lng': 10.15,
+      });
+      trajets.definirUniversite(_facUniversite, [placee]);
+      await trajets.calculer([placee]);
+      while (trajets.calculEnCours) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(trajets.pour('placee')!.approximatif, isFalse);
+      expect(trajets.pour('placee')!.pied!.duree, const Duration(minutes: 10));
+    });
+
     test('durées à pied et en voiture, position approximative signalée, adresse introuvable', () async {
       final trajets = provider(serveurs(introuvables: {'Adresse inconnue, Ariana, Tunis', 'Nulle part, Tunis'}));
       addTearDown(trajets.dispose);

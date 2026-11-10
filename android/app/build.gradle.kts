@@ -7,7 +7,8 @@ plugins {
 android {
     namespace = "com.example.studenthub"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Aucun module natif C/C++ n'est compilé par cette application : laisser
+    // Gradle sans version NDK évite de télécharger inutilement le NDK complet.
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

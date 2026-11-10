@@ -10,8 +10,8 @@ import '../../providers/traduction_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/traduction_service.dart';
 
-const _ink = Color(0xFF172B45);
-const _muted = Color(0xFF647995);
+const _ink = Color(0xFF14263F);
+const _muted = Color(0xFF66748A);
 const _rouge = Color(0xFFC53030);
 
 /// Échanges d'une réclamation entre l'étudiant (auteur) et le propriétaire,
@@ -181,7 +181,7 @@ class _Message extends StatelessWidget {
     final etat = traduction.etat(message.id);
     final afficheTraduction = etat.etat == EtatTraduction.traduit && etat.afficherTraduction;
     final auteur = message.estDuProprietaire ? 'Propriétaire' : 'Étudiant';
-    final couleur = message.estDuProprietaire ? const Color(0xFFEAF3FC) : const Color(0xFFF3F6F9);
+    final couleur = message.estDuProprietaire ? const Color(0xFFE8F0FA) : const Color(0xFFFBFCFE);
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),

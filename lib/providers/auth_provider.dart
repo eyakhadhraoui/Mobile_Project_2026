@@ -88,9 +88,17 @@ class AuthProvider extends ChangeNotifier {
     return serveurAJour;
   }
 
-  Future<void> resetPassword(String email) async {
-    await _run(() => _service.sendPasswordResetEmail(email));
-  }
+  Future<void> reinitialiserMotDePasse({
+    required String email,
+    required String nouveau,
+    required String verificationToken,
+  }) => _run(
+    () => _service.reinitialiserMotDePasse(
+      email: email,
+      nouveau: nouveau,
+      verificationToken: verificationToken,
+    ),
+  );
 
   Future<void> markEmailVerified(String userId) => _service.markEmailVerified(userId);
 
@@ -98,13 +106,8 @@ class AuthProvider extends ChangeNotifier {
 
   Future<List<UserModel>> getUsersForAdministration() => _service.getUsersForAdministration();
 
-  Future<void> setAccountStatus(String userId, AccountStatus status) async {
-    await _service.setAccountStatus(userId, status);
-    if (_currentUserId == userId && status == AccountStatus.blocked) {
-      _currentUserId = null;
-      notifyListeners();
-    }
-  }
+  Future<void> setAccountStatus(String userId, AccountStatus status) =>
+      _service.setAccountStatus(userId, status);
 
   Future<void> signOut() => _run(_service.signOut);
 

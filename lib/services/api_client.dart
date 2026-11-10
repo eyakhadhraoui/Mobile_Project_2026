@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -18,6 +19,10 @@ class ApiException implements Exception {
 
   bool get isNetwork => status == null;
 
+  /// Le serveur ne peut pas être joint, ou la session a été ouverte sans lui :
+  /// l'action peut attendre le retour de la connexion.
+  bool get horsConnexion => code == 'network' || code == 'no_session';
+
   @override
   String toString() => message;
 }
@@ -34,10 +39,22 @@ class ApiClient {
   ApiClient({AppDatabase? database}) : _database = database ?? AppDatabase.instance;
 
   static const tokenKey = 'apiToken';
-  static const _baseUrl = String.fromEnvironment('ACCOUNT_API_URL', defaultValue: '');
-  static const _allowEmulatorHttp = bool.fromEnvironment('ALLOW_INSECURE_MAIL_API', defaultValue: false);
+  /// En debug Android, `10.0.2.2` désigne le localhost de l'ordinateur hôte.
+  /// Une URL explicite reste prioritaire pour les autres environnements.
+  static const _baseUrl = String.fromEnvironment(
+    'ACCOUNT_API_URL',
+    defaultValue: 'http://10.0.2.2:6500',
+  );
+  static const _allowEmulatorHttp = bool.fromEnvironment(
+    'ALLOW_INSECURE_MAIL_API',
+    defaultValue: true,
+  );
 
   final AppDatabase _database;
+
+  /// Signale un compte bloqué ou en attente, pour fermer la session en cours.
+  static final _compteRefuse = StreamController<String>.broadcast();
+  static Stream<String> get compteRefuse => _compteRefuse.stream;
 
   /// URL de base validée (HTTPS, ou HTTP vers l'émulateur Android en debug).
   static Uri? get baseUri {
@@ -90,6 +107,63 @@ class ApiClient {
   }
 
   Future<dynamic> get(String path) async => (await send('GET', path)).data;
+
+  /// GET dont la dernière réponse reste lisible sans connexion, pour le compte
+  /// connecté. La copie est rangée dans `app_settings`.
+  Future<dynamic> getAvecCache(String path) async {
+    final cle = await _cleCache(path);
+    try {
+      final data = await get(path);
+      if (cle != null) await _ecrireCache(cle, data);
+      return data;
+    } on ApiException catch (error) {
+      if (!error.horsConnexion || cle == null) rethrow;
+      final copie = await _lireCache(cle);
+      if (copie == null) rethrow;
+      return jsonDecode(copie);
+    }
+  }
+
+  /// Préfixe des copies de réponses d'un compte, à effacer avec lui.
+  static String prefixeCache(String userId) => 'cache:$userId:';
+
+  Future<String?> _cleCache(String path) async {
+    try {
+      final db = await _database.database;
+      final rows = await db.query('app_settings', columns: ['value'], where: 'key = ?', whereArgs: ['currentUserId'], limit: 1);
+      return rows.isEmpty ? null : '${prefixeCache(rows.first['value'] as String)}$path';
+    } on Object catch (error) {
+      debugPrint('Cache des réponses indisponible : $error');
+      return null;
+    }
+  }
+
+  Future<void> _ecrireCache(String cle, Object? data) async {
+    try {
+      final db = await _database.database;
+      await db.insert('app_settings', {'key': cle, 'value': jsonEncode(data)}, conflictAlgorithm: ConflictAlgorithm.replace);
+    } on Object catch (error) {
+      debugPrint('Copie de la réponse impossible : $error');
+    }
+  }
+
+  Future<String?> _lireCache(String cle) async {
+    final db = await _database.database;
+    final rows = await db.query('app_settings', columns: ['value'], where: 'key = ?', whereArgs: [cle], limit: 1);
+    return rows.isEmpty ? null : rows.first['value'] as String;
+  }
+
+  /// GET conditionnel pour un suivi régulier : la copie hors ligne n'est
+  /// réécrite que lorsque la réponse a changé.
+  Future<ApiResponse> getSiModifie(String path, String? etag) async {
+    final reponse = await send('GET', path, etag: etag);
+    if (reponse.status != 304) {
+      final cle = await _cleCache(path);
+      if (cle != null) await _ecrireCache(cle, reponse.data);
+    }
+    return reponse;
+  }
+
   Future<dynamic> post(String path, [Object? body]) async => (await send('POST', path, body: body ?? const {})).data;
   Future<dynamic> put(String path, Object body) async => (await send('PUT', path, body: body)).data;
   Future<dynamic> delete(String path) async => (await send('DELETE', path)).data;
@@ -110,7 +184,7 @@ class ApiClient {
         throw const ApiException(
           'Session serveur absente : déconnectez-vous puis reconnectez-vous avec le serveur démarré.',
           status: 401,
-          code: 'unauthorized',
+          code: 'no_session',
         );
       }
     }
@@ -135,10 +209,12 @@ class ApiClient {
         return ApiResponse(response.statusCode, data, response.headers.value(HttpHeaders.etagHeader));
       }
       final map = data is Map ? data : const {};
+      final code = map['error'] as String? ?? 'error';
+      if (response.statusCode == 403 && code.startsWith('account_')) _compteRefuse.add(code);
       throw ApiException(
         map['message'] as String? ?? 'Erreur du serveur (${response.statusCode}).',
         status: response.statusCode,
-        code: map['error'] as String? ?? 'error',
+        code: code,
       );
     } on ApiException {
       rethrow;

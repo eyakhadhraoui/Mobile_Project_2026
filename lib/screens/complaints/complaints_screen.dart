@@ -8,6 +8,7 @@ import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/complaint_provider.dart';
 import '../../services/user_service.dart';
+import 'assistant_reclamation_screen.dart';
 import 'complaint_detail_screen.dart';
 import 'complaint_form_screen.dart';
 import 'complaints_map_screen.dart';
@@ -21,6 +22,7 @@ class ComplaintsScreen extends StatefulWidget {
 
 class _ComplaintsScreenState extends State<ComplaintsScreen> with WidgetsBindingObserver {
   bool _isOwner = false;
+  bool _assistantDisponible = false;
   int _filter = 0;
   Timer? _syncTimer;
 
@@ -34,6 +36,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> with WidgetsBinding
       final user = await UserService().getById(userId);
       if (!mounted) return;
       _isOwner = user?.rolePrincipal == UserRole.proprietaire || user?.rolePrincipal == UserRole.administrateur;
+      _assistantDisponible = user != null && user.rolePrincipal != UserRole.prestataire;
       setState(() {});
       final provider = context.read<ComplaintProvider>();
       provider.watchAll();
@@ -109,6 +112,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> with WidgetsBinding
                         ]),
                       ),
                     ),
+                  if (_assistantDisponible) const _AccesAssistant(),
                   // Incidents collectifs : réponse commune possible (propriétaire).
                   if (_isOwner && provider.incidents.isNotEmpty) ...[
                     const SizedBox(height: 12),
@@ -118,15 +122,15 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> with WidgetsBinding
                     padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
                     child: Container(
                       padding: const EdgeInsets.all(5),
-                      decoration: BoxDecoration(color: const Color(0xFFEAF1F6), borderRadius: BorderRadius.circular(18)),
+                      decoration: BoxDecoration(color: const Color(0xFFE8F0FA), borderRadius: BorderRadius.circular(18)),
                       child: Row(children: List.generate(3, (index) => Expanded(
                         child: GestureDetector(
                           onTap: () => setState(() => _filter = index),
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 150),
                             padding: const EdgeInsets.symmetric(vertical: 13),
-                            decoration: BoxDecoration(color: _filter == index ? Colors.white : Colors.transparent, borderRadius: BorderRadius.circular(14), boxShadow: _filter == index ? const [BoxShadow(color: Color(0x11000000), blurRadius: 8, offset: Offset(0, 2))] : null),
-                            child: Text(['Toutes', 'En cours', 'Résolues'][index], textAlign: TextAlign.center, style: TextStyle(fontSize: 12, fontWeight: _filter == index ? FontWeight.w700 : FontWeight.w500, color: _filter == index ? Theme.of(context).colorScheme.primary : const Color(0xFF172B45))),
+                            decoration: BoxDecoration(color: _filter == index ? Theme.of(context).colorScheme.primary : Colors.transparent, borderRadius: BorderRadius.circular(14), boxShadow: _filter == index ? const [BoxShadow(color: Color(0x11000000), blurRadius: 8, offset: Offset(0, 2))] : null),
+                            child: Text(['Toutes', 'En cours', 'Résolues'][index], textAlign: TextAlign.center, style: TextStyle(fontSize: 12, fontWeight: _filter == index ? FontWeight.w700 : FontWeight.w500, color: _filter == index ? Colors.white : const Color(0xFF14263F))),
                           ),
                         ),
                       ))),
@@ -148,6 +152,49 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> with WidgetsBinding
   }
 }
 
+class _AccesAssistant extends StatelessWidget {
+  const _AccesAssistant();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: const LinearGradient(colors: [Color(0xFF0F3D75), Color(0xFF1F66B0)]),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const AssistantReclamationsScreen())),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(color: Colors.white.withValues(alpha: .18), shape: BoxShape.circle),
+                  child: const Icon(Icons.support_agent, color: Colors.white),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Assistant IA réclamations', style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white)),
+                  SizedBox(height: 2),
+                  Text('Décrivez votre problème et recevez une solution adaptée.', style: TextStyle(fontSize: 12, color: Color(0xFFDCE8F6))),
+                ])),
+                const Icon(Icons.chevron_right, color: Colors.white),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ComplaintTile extends StatelessWidget {
   const _ComplaintTile({required this.complaint, required this.onTap});
   final ComplaintModel complaint;
@@ -165,21 +212,21 @@ class _ComplaintTile extends StatelessWidget {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               if (complaint.isDraft)
-                const _SyncChip(label: 'Brouillon', icon: Icons.edit_note, color: Color(0xFF67768A))
+                const _SyncChip(label: 'Brouillon', icon: Icons.edit_note, color: Color(0xFF66748A))
               else
                 _StatusChip(status: complaint.status),
               const SizedBox(width: 7),
               if (!complaint.isDraft && complaint.syncStatus == ComplaintSyncStatus.pending)
                 const _SyncChip(label: 'À synchroniser', icon: Icons.cloud_upload_outlined, color: Color(0xFFA76A0A)),
               const Spacer(),
-              Text('#REC-${complaint.createdAt.year}-$suffix', style: const TextStyle(fontSize: 10, color: Color(0xFF8193AA))),
+              Text('#REC-${complaint.createdAt.year}-$suffix', style: const TextStyle(fontSize: 10, color: Color(0xFF9AA5B4))),
             ]),
             const SizedBox(height: 11),
-            Text(complaint.subject.trim().isEmpty ? 'Brouillon sans titre' : complaint.subject, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: Color(0xFF172B45))),
+            Text(complaint.subject.trim().isEmpty ? 'Brouillon sans titre' : complaint.subject, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: Color(0xFF14263F))),
             const SizedBox(height: 9),
             Row(children: [Icon(Icons.apartment_outlined, size: 15, color: Colors.blueGrey.shade500), const SizedBox(width: 7), Expanded(child: Text(complaint.locationId, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade600))), Text(_priorityName(complaint.priority), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: _priorityColor(complaint.priority)))]),
             const SizedBox(height: 10),
-            Row(children: [Expanded(child: Text('Créée le ${_dateLabel(complaint.createdAt)}', style: const TextStyle(fontSize: 10, color: Color(0xFF8193AA)))), const Icon(Icons.chevron_right, color: Color(0xFF71859C))]),
+            Row(children: [Expanded(child: Text('Créée le ${_dateLabel(complaint.createdAt)}', style: const TextStyle(fontSize: 10, color: Color(0xFF9AA5B4)))), const Icon(Icons.chevron_right, color: Color(0xFF9AA5B4))]),
           ]),
         ),
       ),

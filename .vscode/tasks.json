@@ -1,0 +1,132 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Flutter: Get packages",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.tools\\flutter\\bin\\flutter.bat",
+      "args": [
+        "pub",
+        "get"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": {
+          "executable": "cmd.exe",
+          "args": [
+            "/d",
+            "/c"
+          ]
+        }
+      },
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Flutter: Analyze",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.tools\\flutter\\bin\\flutter.bat",
+      "args": [
+        "analyze"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": {
+          "executable": "cmd.exe",
+          "args": [
+            "/d",
+            "/c"
+          ]
+        }
+      },
+      "problemMatcher": [],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Flutter: Test",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.tools\\flutter\\bin\\flutter.bat",
+      "args": [
+        "test"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": {
+          "executable": "cmd.exe",
+          "args": [
+            "/d",
+            "/c"
+          ]
+        }
+      },
+      "problemMatcher": [],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Flutter: Run on Windows",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.tools\\flutter\\bin\\flutter.bat",
+      "args": [
+        "run",
+        "-d",
+        "windows"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": {
+          "executable": "cmd.exe",
+          "args": [
+            "/d",
+            "/c"
+          ]
+        }
+      },
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Backend: Start local API",
+      "type": "shell",
+      "command": "npm",
+      "args": ["start"],
+      "options": { "cwd": "${workspaceFolder}\\backend" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Flutter: Run Android with local API",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.tools\\flutter\\bin\\flutter.bat",
+      "args": [
+        "run", "-d", "emulator-5554",
+        "--dart-define=ACCOUNT_API_URL=http://10.0.2.2:6500",
+        "--dart-define=ALLOW_INSECURE_MAIL_API=true"
+      ],
+      "options": { "cwd": "${workspaceFolder}", "shell": { "executable": "cmd.exe", "args": ["/d", "/c"] } },
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    }
+  ]
+}

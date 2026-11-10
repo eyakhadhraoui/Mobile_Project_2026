@@ -15,18 +15,27 @@ import 'app_database.dart';
 /// serveur partagé (compte créé avant la synchronisation) : il faut prouver
 /// l'adresse e-mail par code pour le créer.
 class RemoteAccountRequiredException implements Exception {
-  const RemoteAccountRequiredException({required this.email, required this.firstName});
+  const RemoteAccountRequiredException({
+    required this.email,
+    required this.firstName,
+  });
   final String email;
   final String firstName;
 
   @override
-  String toString() => 'Confirmez votre adresse e-mail pour activer le partage des annonces.';
+  String toString() =>
+      'Confirmez votre adresse e-mail pour activer le partage des annonces.';
 }
 
 class AuthService {
   AuthService({AppDatabase? database, ApiClient? api})
     : _database = database ?? AppDatabase.instance,
-      _api = api ?? ApiClient(database: database);
+      _api = api ?? ApiClient(database: database) {
+    // Un administrateur a bloqué le compte : la session en cours se ferme.
+    ApiClient.compteRefuse.listen((_) async {
+      if (await getCurrentUserId() != null) await signOut();
+    });
+  }
 
   static const _sessionKey = 'currentUserId';
   static final _passwordHasher = Pbkdf2(
@@ -42,14 +51,28 @@ class AuthService {
   Stream<String?> get authStateChanges => _authChanges.stream;
 
   /// Session à restaurer au démarrage. Une session sans jeton serveur (ouverte
-  /// avant la synchronisation, ou hors ligne) est fermée pour obliger une
-  /// reconnexion, qui obtiendra le jeton nécessaire aux annonces.
+  /// hors ligne) reste valable tant que le serveur est injoignable ; dès qu'il
+  /// répond, une reconnexion obtient le jeton nécessaire aux annonces.
   Future<String?> restoreSession() async {
     final userId = await getCurrentUserId();
     if (userId == null || ApiClient.baseUri == null) return userId;
     if (await _api.token() != null) return userId;
+    if (!await _serveurJoignable()) return userId;
     await signOut();
     return null;
+  }
+
+  Future<bool> _serveurJoignable() async {
+    try {
+      await _api
+          .send('GET', '/health', authenticated: false)
+          .timeout(const Duration(seconds: 3));
+      return true;
+    } on ApiException catch (error) {
+      return !error.horsConnexion;
+    } on TimeoutException {
+      return false;
+    }
   }
 
   Future<String?> getCurrentUserId() async {
@@ -70,12 +93,17 @@ class AuthService {
       whereArgs: [userId],
       limit: 1,
     );
-    final canUseSession = userRows.isNotEmpty &&
+    final canUseSession =
+        userRows.isNotEmpty &&
         (userRows.first['emailVerified'] as int? ?? 1) == 1 &&
         (userRows.first['accountStatus'] as String? ?? 'approved') ==
             AccountStatus.approved.name;
     if (!canUseSession) {
-      await db.delete('app_settings', where: 'key = ?', whereArgs: [_sessionKey]);
+      await db.delete(
+        'app_settings',
+        where: 'key = ?',
+        whereArgs: [_sessionKey],
+      );
       return null;
     }
     return userId;
@@ -106,7 +134,9 @@ class AuthService {
     }
     final existingUsers = await db.query('users', columns: ['telephone']);
     if (existingUsers.any(
-      (row) => _normalisePhone(row['telephone']! as String) == _normalisePhone(phone),
+      (row) =>
+          _normalisePhone(row['telephone']! as String) ==
+          _normalisePhone(phone),
     )) {
       throw Exception('Ce numéro de téléphone est déjà utilisé.');
     }
@@ -175,8 +205,14 @@ class AuthService {
     );
     if (rows.isEmpty) throw Exception('Compte introuvable sur cet appareil.');
     final row = rows.first;
-    final actual = await _hashPassword(password, base64Decode(row['passwordSalt']! as String));
-    if (!_constantTimeEquals(actual, base64Decode(row['passwordHash']! as String))) {
+    final actual = await _hashPassword(
+      password,
+      base64Decode(row['passwordSalt']! as String),
+    );
+    if (!_constantTimeEquals(
+      actual,
+      base64Decode(row['passwordHash']! as String),
+    )) {
       throw Exception('Identifiants incorrects.');
     }
     final user = _userFromRow(row);
@@ -208,7 +244,9 @@ class AuthService {
         'id': id,
         'prenom': prenom.isEmpty ? 'Utilisateur' : prenom,
         'nom': nom,
-        'role': role == UserRole.administrateur ? UserRole.locataire.name : role.name,
+        'role': role == UserRole.administrateur
+            ? UserRole.locataire.name
+            : role.name,
         'password': password,
       },
     );
@@ -245,7 +283,9 @@ class AuthService {
       final normalizedCredential = _normalisePhone(credential);
       rows = phoneRows
           .where(
-            (row) => _normalisePhone(row['telephone']! as String) == normalizedCredential,
+            (row) =>
+                _normalisePhone(row['telephone']! as String) ==
+                normalizedCredential,
           )
           .take(1)
           .toList();
@@ -264,16 +304,20 @@ class AuthService {
     final expected = base64Decode(row['passwordHash']! as String);
     final actual = await _hashPassword(password, salt);
     if (!_constantTimeEquals(actual, expected)) {
-      throw Exception('Identifiants incorrects.');
+      return _connexionAvecMotDePasseServeur(row, password);
     }
 
     if ((row['emailVerified'] as int? ?? 1) != 1) {
-      throw Exception('Veuillez vérifier votre adresse e-mail avant de vous connecter.');
+      throw Exception(
+        'Veuillez vérifier votre adresse e-mail avant de vous connecter.',
+      );
     }
-    if ((row['accountStatus'] as String? ?? 'approved') == AccountStatus.blocked.name) {
+    if ((row['accountStatus'] as String? ?? 'approved') ==
+        AccountStatus.blocked.name) {
       throw Exception('Ce compte est bloqué. Contactez l’administrateur.');
     }
-    if ((row['accountStatus'] as String? ?? 'approved') != AccountStatus.approved.name) {
+    if ((row['accountStatus'] as String? ?? 'approved') !=
+        AccountStatus.approved.name) {
       throw Exception('Votre compte attend la validation de l’administrateur.');
     }
 
@@ -294,10 +338,51 @@ class AuthService {
           firstName: row['prenom']! as String,
         );
       }
+      if (error.status == 403) throw Exception(error.message);
       // Serveur absent : connexion hors ligne (réclamations locales seulement).
       token = null;
     }
     await _openSession(userId, token);
+  }
+
+  /// Mot de passe différent de la copie locale : il a pu être changé depuis un
+  /// autre appareil. Si le serveur l'accepte, la copie locale est mise à jour.
+  Future<void> _connexionAvecMotDePasseServeur(
+    Map<String, Object?> row,
+    String password,
+  ) async {
+    final String token;
+    try {
+      final response = await _api.send(
+        'POST',
+        '/auth/login',
+        authenticated: false,
+        body: {'email': row['email'], 'password': password},
+      );
+      token = (response.data as Map)['token'] as String;
+    } on ApiException catch (error) {
+      if (error.status == 403) throw Exception(error.message);
+      throw Exception('Identifiants incorrects.');
+    }
+    await _enregistrerMotDePasseLocal(row['id']! as String, password);
+    await _openSession(row['id']! as String, token);
+  }
+
+  Future<void> _enregistrerMotDePasseLocal(
+    String userId,
+    String password,
+  ) async {
+    final db = await _database.database;
+    final salt = List<int>.generate(16, (_) => Random.secure().nextInt(256));
+    await db.update(
+      'users',
+      {
+        'passwordHash': base64Encode(await _hashPassword(password, salt)),
+        'passwordSalt': base64Encode(salt),
+      },
+      where: 'id = ?',
+      whereArgs: [userId],
+    );
   }
 
   /// Le serveur vérifie le mot de passe ; le compte est alors recréé sur cet
@@ -314,8 +399,11 @@ class AuthService {
       data = response.data as Map;
     } on ApiException catch (error) {
       if (error.isNetwork) {
-        throw Exception('Compte inconnu sur cet appareil et serveur injoignable : réessayez avec le serveur démarré.');
+        throw Exception(
+          'Compte inconnu sur cet appareil et serveur injoignable : réessayez avec le serveur démarré.',
+        );
       }
+      if (error.status == 403) throw Exception(error.message);
       throw Exception('Identifiants incorrects.');
     }
     final user = Map<String, dynamic>.from(data['user'] as Map);
@@ -328,7 +416,12 @@ class AuthService {
       'email': email,
       // Colonne obligatoire et unique : valeur provisoire si le serveur ne la connaît pas.
       'telephone': telephone.isEmpty ? 'a-completer-$id' : telephone,
-      'rolePrincipal': UserRole.values.where((r) => r.name == user['role']).firstOrNull?.name ?? UserRole.locataire.name,
+      'rolePrincipal':
+          UserRole.values
+              .where((r) => r.name == user['role'])
+              .firstOrNull
+              ?.name ??
+          UserRole.locataire.name,
       'passwordHash': base64Encode(await _hashPassword(password, salt)),
       'passwordSalt': base64Encode(salt),
       'emailVerified': 1,
@@ -340,7 +433,13 @@ class AuthService {
       // Un compte « partagé » (isRemote = 1) créé par la synchronisation des
       // réclamations est complété sur place : un REPLACE supprimerait ses
       // réclamations (clé étrangère en cascade).
-      final existant = await db.query('users', columns: ['id'], where: 'id = ?', whereArgs: [id], limit: 1);
+      final existant = await db.query(
+        'users',
+        columns: ['id'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
       if (existant.isEmpty) {
         await db.insert('users', {
           ...ligne,
@@ -355,7 +454,9 @@ class AuthService {
       }
     } on DatabaseException catch (error) {
       if (error.isUniqueConstraintError()) {
-        throw Exception('Un autre compte de cet appareil utilise déjà ce numéro de téléphone.');
+        throw Exception(
+          'Un autre compte de cet appareil utilise déjà ce numéro de téléphone.',
+        );
       }
       rethrow;
     }
@@ -377,22 +478,41 @@ class AuthService {
 
   Future<UserModel?> getUserByEmail(String email) async {
     final db = await _database.database;
-    final rows = await db.query('users', where: 'email = ? COLLATE NOCASE AND isRemote = 0', whereArgs: [email.trim()], limit: 1);
+    final rows = await db.query(
+      'users',
+      where: 'email = ? COLLATE NOCASE AND isRemote = 0',
+      whereArgs: [email.trim()],
+      limit: 1,
+    );
     return rows.isEmpty ? null : _userFromRow(rows.first);
   }
 
+  /// Comptes du serveur partagé : un blocage vaut alors sur tous les appareils.
   Future<List<UserModel>> getUsersForAdministration() async {
-    final db = await _database.database;
-    final rows = await db.query('users', where: 'isRemote = 0', orderBy: 'createdAt DESC');
-    return rows.map(_userFromRow).toList();
+    final data = await _api.get('/admin/users') as List;
+    return [
+      for (final item in data.whereType<Map>())
+        UserModel(
+          id: item['id'] as String,
+          nom: item['nom'] as String? ?? '',
+          prenom: item['prenom'] as String? ?? '',
+          email: item['email'] as String? ?? '',
+          telephone: item['telephone'] as String? ?? '',
+          rolePrincipal: UserRole.values.firstWhere(
+            (role) => role.name == item['role'],
+            orElse: () => UserRole.locataire,
+          ),
+          preferences: const {},
+          accountStatus: AccountStatus.values.firstWhere(
+            (status) => status.name == item['accountStatus'],
+            orElse: () => AccountStatus.approved,
+          ),
+        ),
+    ];
   }
 
   Future<void> setAccountStatus(String userId, AccountStatus status) async {
-    final db = await _database.database;
-    await db.update('users', {'accountStatus': status.name}, where: 'id = ?', whereArgs: [userId]);
-    if (status == AccountStatus.blocked && await getCurrentUserId() == userId) {
-      await signOut();
-    }
+    await _api.post('/admin/users/$userId/statut', {'statut': status.name});
   }
 
   static UserModel _userFromRow(Map<String, Object?> row) => UserModel(
@@ -401,12 +521,22 @@ class AuthService {
     prenom: row['prenom']! as String,
     email: row['email']! as String,
     telephone: row['telephone']! as String,
-    rolePrincipal: UserRole.values.firstWhere((role) => role.name == row['rolePrincipal'], orElse: () => UserRole.locataire),
-    roleSecondaire: UserRole.values.where((role) => role.name == row['roleSecondaire']).firstOrNull,
+    rolePrincipal: UserRole.values.firstWhere(
+      (role) => role.name == row['rolePrincipal'],
+      orElse: () => UserRole.locataire,
+    ),
+    roleSecondaire: UserRole.values
+        .where((role) => role.name == row['roleSecondaire'])
+        .firstOrNull,
     photo: row['photo'] as String?,
-    preferences: jsonDecode(row['preferences']! as String) as Map<String, dynamic>,
+    preferences:
+        jsonDecode(row['preferences']! as String) as Map<String, dynamic>,
     emailVerified: (row['emailVerified'] as int? ?? 1) == 1,
-    accountStatus: AccountStatus.values.firstWhere((status) => status.name == (row['accountStatus'] as String? ?? 'approved'), orElse: () => AccountStatus.approved),
+    accountStatus: AccountStatus.values.firstWhere(
+      (status) =>
+          status.name == (row['accountStatus'] as String? ?? 'approved'),
+      orElse: () => AccountStatus.approved,
+    ),
     langue: langueValide(row['langue']),
   );
 
@@ -415,15 +545,29 @@ class AuthService {
   /// un), puis enregistré localement. Retourne false si le serveur n'a pas pu
   /// être mis à jour (hors ligne) : il le sera à la prochaine connexion, par la
   /// confirmation e-mail du compte serveur.
-  Future<bool> changePassword({required String ancien, required String nouveau}) async {
+  Future<bool> changePassword({
+    required String ancien,
+    required String nouveau,
+  }) async {
     final userId = await getCurrentUserId();
     if (userId == null) throw Exception('Session expirée : reconnectez-vous.');
     final db = await _database.database;
-    final rows = await db.query('users', where: 'id = ?', whereArgs: [userId], limit: 1);
+    final rows = await db.query(
+      'users',
+      where: 'id = ?',
+      whereArgs: [userId],
+      limit: 1,
+    );
     if (rows.isEmpty) throw Exception('Compte introuvable sur cet appareil.');
     final row = rows.first;
-    final actual = await _hashPassword(ancien, base64Decode(row['passwordSalt']! as String));
-    if (!_constantTimeEquals(actual, base64Decode(row['passwordHash']! as String))) {
+    final actual = await _hashPassword(
+      ancien,
+      base64Decode(row['passwordSalt']! as String),
+    );
+    if (!_constantTimeEquals(
+      actual,
+      base64Decode(row['passwordHash']! as String),
+    )) {
       throw Exception('Mot de passe actuel incorrect.');
     }
     var serveurAJour = false;
@@ -439,18 +583,41 @@ class AuthService {
     final salt = List<int>.generate(16, (_) => Random.secure().nextInt(256));
     await db.update(
       'users',
-      {'passwordHash': base64Encode(await _hashPassword(nouveau, salt)), 'passwordSalt': base64Encode(salt)},
+      {
+        'passwordHash': base64Encode(await _hashPassword(nouveau, salt)),
+        'passwordSalt': base64Encode(salt),
+      },
       where: 'id = ?',
       whereArgs: [userId],
     );
     return serveurAJour;
   }
 
-  Future<void> sendPasswordResetEmail(String email) async {
-    throw UnsupportedError(
-      'La réinitialisation par e-mail nécessite un service en ligne. '
-      'Cette version SQLite conserve les comptes uniquement sur cet appareil.',
-    );
+  /// Remplace le mot de passe après saisie du code reçu par e-mail.
+  /// [verificationToken] est le jeton délivré par le serveur pour ce code.
+  /// Un compte absent du serveur (créé avant le partage) est mis à jour ici seulement.
+  Future<void> reinitialiserMotDePasse({
+    required String email,
+    required String nouveau,
+    required String verificationToken,
+  }) async {
+    var surServeur = true;
+    try {
+      await _api.send(
+        'POST',
+        '/auth/password-reset',
+        authenticated: false,
+        body: {'verificationToken': verificationToken, 'password': nouveau},
+      );
+    } on ApiException catch (error) {
+      if (error.status != 404) rethrow;
+      surServeur = false;
+    }
+    final local = await getUserByEmail(email);
+    if (local != null) await _enregistrerMotDePasseLocal(local.id, nouveau);
+    if (local == null && !surServeur) {
+      throw Exception('Aucun compte trouvé avec cette adresse e-mail.');
+    }
   }
 
   Future<void> signOut() async {
@@ -477,13 +644,27 @@ class AuthService {
       where: 'userId = ?',
       whereArgs: [userId],
     );
+    final demandeRows = await db.query(
+      'demandes',
+      columns: ['photoPath'],
+      where: 'userId = ? AND photoPath IS NOT NULL',
+      whereArgs: [userId],
+    );
     final photoPaths = <String>[
       if (userRows.isNotEmpty && userRows.first['photo'] is String)
         userRows.first['photo']! as String,
       for (final row in complaintRows)
         ...List<String>.from(jsonDecode(row['photos']! as String) as List),
+      for (final row in demandeRows)
+        if ((row['photoPath']! as String).contains('maintenance_photos'))
+          row['photoPath']! as String,
     ];
     await db.delete('users', where: 'id = ?', whereArgs: [userId]);
+    await db.delete('annonces', where: 'cache_utilisateur = ?', whereArgs: [userId]);
+    await db.delete('annonces_file', where: 'userId = ?', whereArgs: [userId]);
+    await db.delete('messages_file', where: 'userId = ?', whereArgs: [userId]);
+    await db.delete('miroir_etat');
+    await db.delete('app_settings', where: 'key LIKE ?', whereArgs: ['${ApiClient.prefixeCache(userId)}%']);
     await signOut();
     for (final path in photoPaths) {
       try {

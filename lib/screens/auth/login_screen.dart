@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/utils/validators.dart';
@@ -6,6 +7,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/welcome_email_service.dart';
 import 'email_verification_dialog.dart';
+import 'mot_de_passe_oublie_screen.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -133,10 +135,12 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      body: SafeArea(
+      body: _AvecEntete(
+        // Lu ici : à l'intérieur du Scaffold, la hauteur du clavier vaut 0.
+        clavierOuvert: MediaQuery.viewInsetsOf(context).bottom > 0,
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 14),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 480),
               child: Form(
@@ -144,14 +148,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const _BrandMark(),
-                    const SizedBox(height: 34),
-                    Icon(
-                      Icons.apartment_rounded,
-                      size: 82,
-                      color: theme.colorScheme.primary,
-                    ),
-                    const SizedBox(height: 18),
                     Text(
                       'Bon retour !',
                       textAlign: TextAlign.center,
@@ -163,7 +159,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium,
                     ),
-                    const SizedBox(height: 30),
+                    const SizedBox(height: 18),
                     const _FieldLabel('Adresse e-mail ou téléphone'),
                     TextFormField(
                       controller: _identityController,
@@ -202,14 +198,20 @@ class _LoginScreenState extends State<LoginScreen> {
                       validator: (value) =>
                           Validators.required(value, label: 'Le mot de passe'),
                     ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton(
-                        onPressed: _showResetInfo,
-                        child: const Text('Mot de passe oublié ?'),
-                      ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      children: [
+                        TextButton(
+                          onPressed: _verifyEmail,
+                          child: const Text('Vérifier mon e-mail'),
+                        ),
+                        TextButton(
+                          onPressed: _ouvrirMotDePasseOublie,
+                          child: const Text('Mot de passe oublié ?'),
+                        ),
+                      ],
                     ),
-                    Align(alignment: Alignment.centerRight, child: TextButton(onPressed: _verifyEmail, child: const Text('Vérifier mon adresse e-mail'))),
                     const SizedBox(height: 8),
                     Consumer<AuthProvider>(
                       builder: (context, auth, _) => FilledButton(
@@ -224,12 +226,13 @@ class _LoginScreenState extends State<LoginScreen> {
                             : const Text('Se connecter'),
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 8),
                     Center(
                       child: Wrap(
+                        alignment: WrapAlignment.center,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          const Text('Vous n’avez pas encore de compte ? '),
+                          const Text('Pas encore de compte ?'),
                           TextButton(
                             onPressed: () => Navigator.of(context).push(
                               MaterialPageRoute<void>(
@@ -241,12 +244,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Les annonces sont partagées via le serveur StudentHub.',
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodySmall,
-                    ),
                   ],
                 ),
               ),
@@ -257,59 +254,66 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  void _showResetInfo() {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Réinitialiser le mot de passe'),
-        content: const Text(
-          'Les comptes SQLite sont enregistrés uniquement sur cet appareil. '
-          'La réinitialisation par e-mail nécessite un serveur ou un service en ligne.',
+  void _ouvrirMotDePasseOublie() {
+    final saisie = _identityController.text.trim();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MotDePasseOublieScreen(
+          email: saisie.contains('@') ? saisie : '',
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Compris'),
-          ),
-        ],
       ),
     );
   }
 }
 
-class _BrandMark extends StatelessWidget {
-  const _BrandMark();
+/// Bandeau sombre de la marque, au-dessus du formulaire. Il s'efface quand le
+/// clavier est ouvert pour laisser la place aux champs.
+class _AvecEntete extends StatelessWidget {
+  const _AvecEntete({required this.clavierOuvert, required this.child});
+  final bool clavierOuvert;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: primary,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: const Icon(Icons.home_work_outlined, color: Colors.white),
-        ),
-        const SizedBox(width: 10),
-        Text.rich(
-          TextSpan(
-            children: [
-              const TextSpan(text: 'Student'),
-              TextSpan(
-                text: 'Hub',
-                style: TextStyle(color: primary),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: clavierOuvert ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light,
+      child: Column(
+        children: [
+          if (!clavierOuvert) Container(
+            width: double.infinity,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFF071B38), Color(0xFF0F3D75)],
               ),
-            ],
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
+            ),
+            child: const SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(24, 8, 24, 20),
+                child: Column(
+                  children: [
+                    Icon(Icons.home_work_outlined, size: 40, color: Color(0xFFE9B15E)),
+                    SizedBox(height: 6),
+                    Text(
+                      'StudentHub',
+                      style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w700),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Tous vos services du quotidien',
+                      style: TextStyle(color: Color(0xFFDCE8F6), fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-          style: Theme.of(context).textTheme.titleLarge
-              ?.copyWith(fontWeight: FontWeight.w800),
-        ),
-      ],
+          Expanded(child: SafeArea(top: clavierOuvert, child: child)),
+        ],
+      ),
     );
   }
 }

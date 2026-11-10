@@ -1,6 +1,25 @@
 /// Statuts d'une annonce, stockés par leur nom (`statut.name`) en base et sur le serveur.
 enum StatutAnnonce { enAttente, publiee, archivee, programmee }
 
+/// Résultat du détecteur de photos déjà publiées. [photoCible] est null si
+/// l'autre annonce n'est pas publique.
+class CorrespondancePhoto {
+  const CorrespondancePhoto({required this.niveau, this.raison = '', this.photoCible, this.annonceCibleTitre});
+
+  factory CorrespondancePhoto.fromJson(Map json) => CorrespondancePhoto(
+    niveau: json['niveau'] as String? ?? 'a_verifier',
+    raison: json['raison'] as String? ?? '',
+    photoCible: json['photoCible'] as String?,
+    annonceCibleTitre: json['annonceCibleTitre'] as String?,
+  );
+
+  /// certaine, confirmee_ia ou a_verifier.
+  final String niveau;
+  final String raison;
+  final String? photoCible;
+  final String? annonceCibleTitre;
+}
+
 extension StatutAnnonceLabel on StatutAnnonce {
   String get libelle => switch (this) {
     StatutAnnonce.enAttente => 'En attente de validation',
@@ -49,6 +68,9 @@ class Annonce {
     this.ville = '',
     this.quartier = '',
     this.adresse = '',
+    this.lat,
+    this.lng,
+    this.facsProches = const [],
     this.photos = const [],
     this.statut = StatutAnnonce.enAttente,
     this.motifModeration = '',
@@ -84,6 +106,13 @@ class Annonce {
   final String ville;
   final String quartier;
   final String adresse;
+
+  /// Position exacte choisie sur la carte (null si le propriétaire n'en a pas choisi).
+  final double? lat;
+  final double? lng;
+
+  /// Établissements trouvés autour de cette position, du plus proche au plus loin.
+  final List<FacProche> facsProches;
 
   /// Chemins serveur (`/photos/...`) ou, avant envoi, chemins de fichiers locaux.
   final List<String> photos;
@@ -139,6 +168,8 @@ class Annonce {
     bool? autoriserCommentaires,
     int? likes,
     bool? aimeParMoi,
+    int? nbCommentaires,
+    int? maNote,
   }) => Annonce(
     id: id,
     categorie: categorie ?? this.categorie,
@@ -152,6 +183,9 @@ class Annonce {
     ville: ville ?? this.ville,
     quartier: quartier ?? this.quartier,
     adresse: adresse ?? this.adresse,
+    lat: lat,
+    lng: lng,
+    facsProches: facsProches,
     photos: photos ?? this.photos,
     statut: statut ?? this.statut,
     motifModeration: motifModeration,
@@ -162,10 +196,10 @@ class Annonce {
     datePublication: identical(datePublication, _unchanged) ? this.datePublication : datePublication as DateTime?,
     likes: likes ?? this.likes,
     aimeParMoi: aimeParMoi ?? this.aimeParMoi,
-    nbCommentaires: nbCommentaires,
+    nbCommentaires: nbCommentaires ?? this.nbCommentaires,
     noteMoyenne: noteMoyenne,
     nbAvis: nbAvis,
-    maNote: maNote,
+    maNote: maNote ?? this.maNote,
   );
 
   /// Données envoyées au serveur lors d'une création ou d'une modification.
@@ -186,6 +220,9 @@ class Annonce {
       'ville': ville,
       'quartier': quartier,
       'adresse': adresse,
+      'lat': lat,
+      'lng': lng,
+      'facsProches': facsProches.map((f) => f.toJson()).toList(),
     },
   };
 
@@ -202,6 +239,12 @@ class Annonce {
     ville: json['ville'] as String? ?? '',
     quartier: json['quartier'] as String? ?? '',
     adresse: json['adresse'] as String? ?? '',
+    lat: (json['lat'] as num?)?.toDouble(),
+    lng: (json['lng'] as num?)?.toDouble(),
+    facsProches: [
+      for (final fac in (json['facsProches'] as List? ?? const []).whereType<Map>())
+        FacProche.fromJson(fac),
+    ],
     photos: (json['photos'] as List? ?? const []).cast<String>(),
     statut: StatutAnnonceLabel.depuisNom(json['statut']),
     motifModeration: json['motifModeration'] as String? ?? '',
@@ -233,6 +276,9 @@ class Annonce {
     'ville': ville,
     'quartier': quartier,
     'adresse': adresse,
+    'lat': lat,
+    'lng': lng,
+    'facsProches': facsProches.map((f) => f.toJson()).toList(),
     'photos': photos,
     'statut': statut.name,
     'motifModeration': motifModeration,
@@ -248,6 +294,26 @@ class Annonce {
     'nbAvis': nbAvis,
     'maNote': maNote,
   };
+}
+
+/// Établissement d'enseignement supérieur situé autour d'un logement.
+class FacProche {
+  const FacProche({required this.nom, required this.lat, required this.lng});
+
+  /// Distance maximale entre un logement et une fac dite « proche ».
+  static const rayonKm = 3.0;
+
+  final String nom;
+  final double lat;
+  final double lng;
+
+  factory FacProche.fromJson(Map<dynamic, dynamic> json) => FacProche(
+    nom: json['nom'] as String? ?? '',
+    lat: (json['lat'] as num? ?? 0).toDouble(),
+    lng: (json['lng'] as num? ?? 0).toDouble(),
+  );
+
+  Map<String, dynamic> toJson() => {'nom': nom, 'lat': lat, 'lng': lng};
 }
 
 class CommentaireAnnonce {

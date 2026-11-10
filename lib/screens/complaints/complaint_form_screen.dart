@@ -15,8 +15,21 @@ import '../../services/tri_reclamation_service.dart';
 import 'complaint_success_screen.dart';
 
 class ComplaintFormScreen extends StatefulWidget {
-  const ComplaintFormScreen({super.key, this.complaint});
+  const ComplaintFormScreen({
+    super.key,
+    this.complaint,
+    this.sujetInitial,
+    this.descriptionInitiale,
+    this.categorieInitiale,
+    this.prioriteInitiale,
+  });
   final ComplaintModel? complaint;
+
+  /// Pré-remplissage d'une nouvelle réclamation (depuis l'assistant).
+  final String? sujetInitial;
+  final String? descriptionInitiale;
+  final ComplaintCategory? categorieInitiale;
+  final ComplaintPriority? prioriteInitiale;
 
   @override
   State<ComplaintFormScreen> createState() => _ComplaintFormScreenState();
@@ -48,10 +61,10 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
     super.initState();
     final complaint = widget.complaint;
     _locationController = TextEditingController(text: complaint?.locationId ?? '');
-    _subjectController = TextEditingController(text: complaint?.subject ?? '');
-    _descriptionController = TextEditingController(text: complaint?.description ?? '');
-    _category = complaint?.category ?? ComplaintCategory.fuiteEau;
-    _priority = complaint?.priority ?? ComplaintPriority.moyenne;
+    _subjectController = TextEditingController(text: complaint?.subject ?? widget.sujetInitial ?? '');
+    _descriptionController = TextEditingController(text: complaint?.description ?? widget.descriptionInitiale ?? '');
+    _category = complaint?.category ?? widget.categorieInitiale ?? ComplaintCategory.fuiteEau;
+    _priority = complaint?.priority ?? widget.prioriteInitiale ?? ComplaintPriority.moyenne;
     _photos = [...?complaint?.photos];
     _dangers = detecterDangers('${_subjectController.text}\n${_descriptionController.text}');
   }
@@ -219,14 +232,14 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 160),
                       decoration: BoxDecoration(
-                        color: selected ? const Color(0xFFEAF5FF) : Colors.white,
+                        color: selected ? const Color(0xFFE8F0FA) : Colors.white,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: selected ? Theme.of(context).colorScheme.primary : const Color(0xFFDCE7F1), width: selected ? 1.4 : 1),
+                        border: Border.all(color: selected ? Theme.of(context).colorScheme.primary : const Color(0xFFE4EAF2), width: selected ? 1.4 : 1),
                       ),
                       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        Icon(item.$2, size: 25, color: selected ? Theme.of(context).colorScheme.primary : const Color(0xFF172B45)),
+                        Icon(item.$2, size: 25, color: selected ? Theme.of(context).colorScheme.primary : const Color(0xFF14263F)),
                         const SizedBox(height: 8),
-                        Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: Text(item.$3, textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: selected ? Theme.of(context).colorScheme.primary : const Color(0xFF172B45)))),
+                        Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: Text(item.$3, textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: selected ? Theme.of(context).colorScheme.primary : const Color(0xFF14263F)))),
                       ]),
                     ),
                   );
@@ -261,7 +274,7 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
                 borderRadius: BorderRadius.circular(18),
                 child: Container(
                   padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFFB8D9F7), style: BorderStyle.solid)),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFFC8DAF0), style: BorderStyle.solid)),
                   child: Column(children: [
                     Icon(Icons.photo_camera_outlined, color: Theme.of(context).colorScheme.primary, size: 27),
                     const SizedBox(height: 6),
@@ -286,7 +299,7 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
                 final bloquee = _urgenceImposee && priority != ComplaintPriority.urgente;
                 return Expanded(child: Padding(padding: const EdgeInsets.only(right: 8), child: OutlinedButton(
                   onPressed: bloquee ? null : () => setState(() => _priority = priority),
-                  style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14), backgroundColor: selected ? color.withValues(alpha: .10) : Colors.white, foregroundColor: selected ? color : const Color(0xFF172B45), side: BorderSide(color: selected ? color : const Color(0xFFDCE7F1)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+                  style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14), backgroundColor: selected ? color.withValues(alpha: .10) : Colors.white, foregroundColor: selected ? color : const Color(0xFF14263F), side: BorderSide(color: selected ? color : const Color(0xFFE4EAF2)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
                   child: Text(_priorityName(priority), style: const TextStyle(fontSize: 12)),
                 )));
               }).toList()),
@@ -349,7 +362,7 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
     ],
   );
 
-  Widget _label(String label) => Padding(padding: const EdgeInsets.only(bottom: 9), child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF172B45))));
+  Widget _label(String label) => Padding(padding: const EdgeInsets.only(bottom: 9), child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF14263F))));
 }
 
 const _categoryOptions = <(ComplaintCategory, IconData, String)>[
@@ -380,12 +393,12 @@ class _CarteSuggestion extends StatelessWidget {
     final libelle = categorie == null ? null : _categoryOptions.where((o) => o.$1 == categorie).firstOrNull?.$3;
     return Card(
       margin: const EdgeInsets.only(top: 10),
-      color: const Color(0xFFF1F7FD),
+      color: const Color(0xFFFBFCFE),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Row(children: [
-            Icon(Icons.auto_awesome, size: 18, color: Color(0xFF326D98)),
+            Icon(Icons.auto_awesome, size: 18, color: Color(0xFF0F3D75)),
             SizedBox(width: 6),
             Text('Proposition de l’IA', style: TextStyle(fontWeight: FontWeight.w700)),
           ]),

@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/annonce.dart';
 import '../../models/trajet.dart';
 import '../../providers/annonce_provider.dart';
 import '../../providers/trajet_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/geocodage_service.dart';
 
-const _ink = Color(0xFF102A43);
-const _blue = Color(0xFF326D98);
-const _muted = Color(0xFF52677B);
+const _ink = Color(0xFF14263F);
+const _blue = Color(0xFF0F3D75);
+const _muted = Color(0xFF66748A);
 
 /// Établissements fréquents, proposés comme raccourcis de recherche. Leur
 /// position est toujours demandée à OpenStreetMap, jamais codée en dur.
@@ -34,16 +35,42 @@ class BlocUniversite extends StatelessWidget {
     final trajets = context.watch<TrajetProvider>();
     final universite = trajets.universite;
     if (universite == null) {
-      return Card(
-        color: Colors.white,
-        elevation: 0,
-        margin: const EdgeInsets.only(bottom: 10),
-        child: ListTile(
-          leading: const Icon(Icons.school_outlined, color: _blue),
-          title: const Text('Temps de trajet jusqu’à votre fac', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-          subtitle: const Text('Choisissez votre université pour voir les durées à pied et en voiture.', style: TextStyle(fontSize: 12)),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => choisirUniversite(context),
+      return Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          gradient: const LinearGradient(colors: [Color(0xFF0A2E5C), Color(0xFF1F66B0)]),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(18),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => choisirUniversite(context),
+            child: const Padding(
+              padding: EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Temps de trajet jusqu’à votre fac', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+                        SizedBox(height: 4),
+                        Text('Choisissez votre université pour voir les durées à pied et en voiture.', style: TextStyle(color: Color(0xFFDCE8F6), fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: 10),
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: Colors.white,
+                    child: Icon(Icons.arrow_forward, size: 18, color: Color(0xFF0F3D75)),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       );
     }
@@ -122,6 +149,34 @@ class BlocUniversite extends StatelessWidget {
 }
 
 /// « 🚶 12 min · 🚗 6 min · 1,2 km » sous un logement.
+/// Pastille des logements situés autour de la fac de l'étudiant.
+class BadgeFacProche extends StatelessWidget {
+  const BadgeFacProche({super.key, required this.annonce});
+  final Annonce annonce;
+
+  @override
+  Widget build(BuildContext context) {
+    final trajets = context.watch<TrajetProvider>();
+    if (!trajets.presDeMaFac(annonce)) return const SizedBox.shrink();
+    final distance = formatDistance(trajets.distanceFacKm(annonce)! * 1000);
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          const Icon(Icons.school, size: 15, color: _blue),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text(
+              'Près de votre fac · $distance',
+              style: const TextStyle(fontSize: 12, color: _blue, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class LigneTrajet extends StatelessWidget {
   const LigneTrajet({super.key, required this.annonceId});
   final String annonceId;

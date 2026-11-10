@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/api_client.dart';
 import '../../services/housing_service.dart';
+import '../messagerie/conversations_screen.dart';
 import 'housing_actions.dart';
 
 /// Visites et demandes de location reçues (propriétaire) et envoyées (étudiant),
@@ -27,7 +28,9 @@ class _HousingRequestsScreenState extends State<HousingRequestsScreen> {
 
   Future<void> _recharger() async {
     final future = _charger();
-    setState(() => _donnees = future);
+    setState(() {
+      _donnees = future;
+    });
     await future.catchError((_) => _Donnees.vide());
   }
 
@@ -94,6 +97,13 @@ class _HousingRequestsScreenState extends State<HousingRequestsScreen> {
           ),
   );
 
+  /// Le propriétaire écrit à la personne concernée, le locataire au propriétaire.
+  Future<void> _ecrire(DemandeLogement d, bool proprietaire) => contacterSurAnnonce(
+    context,
+    annonceId: d.data['propertyId'] as String,
+    locataireId: proprietaire ? d.data['clientId'] as String : null,
+  );
+
   Widget _demandeCard(DemandeLogement r, {required bool proprietaire}) {
     final debut = r.date('startDate'), fin = r.date('endDate');
     final pending = r.statut == 'pending';
@@ -115,6 +125,7 @@ class _HousingRequestsScreenState extends State<HousingRequestsScreen> {
             if (debut != null && fin != null) Text('Du ${formatJour(debut)} au ${formatJour(fin)} (${r.data['duration']} mois)'),
             Text('Paiement : ${_frequence(r.data['paymentFrequency'])} · ${_moyen(r.data['paymentMethod'])}'),
             if ((r.data['additionalMessage'] as String? ?? '').isNotEmpty) Text('« ${r.data['additionalMessage']} »'),
+            Align(alignment: Alignment.centerLeft, child: TextButton.icon(onPressed: () => _ecrire(r, proprietaire), icon: const Icon(Icons.chat_bubble_outline, size: 18), label: const Text('Envoyer un message'))),
             if (pending)
               Wrap(spacing: 8, children: [
                 if (proprietaire) ...[
@@ -152,12 +163,15 @@ class _HousingRequestsScreenState extends State<HousingRequestsScreen> {
           proprietaire ? 'Visiteur : ${v.clientNom}' : 'Propriétaire : ${v.proprietaireNom}',
         ].join('\n')),
         isThreeLine: true,
-        trailing: aVenir
-            ? TextButton(
-                onPressed: () => _action(() => _service.annulerVisite(v.id), 'Visite annulée.'),
-                child: const Text('Annuler'),
-              )
-            : _StatutChip(v.statut == 'confirmed' ? 'done' : v.statut),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          IconButton(tooltip: 'Envoyer un message', onPressed: () => _ecrire(v, proprietaire), icon: const Icon(Icons.chat_bubble_outline)),
+          aVenir
+              ? TextButton(
+                  onPressed: () => _action(() => _service.annulerVisite(v.id), 'Visite annulée.'),
+                  child: const Text('Annuler'),
+                )
+              : _StatutChip(v.statut == 'confirmed' ? 'done' : v.statut),
+        ]),
       ),
     );
   }
@@ -223,10 +237,10 @@ class _StatutChip extends StatelessWidget {
       'pending' => ('En attente', const Color(0xFFB7791F)),
       'accepted' => ('Acceptée', const Color(0xFF16804A)),
       'refused' => ('Refusée', const Color(0xFFC53030)),
-      'cancelled' => ('Annulée', const Color(0xFF647995)),
+      'cancelled' => ('Annulée', const Color(0xFF66748A)),
       'confirmed' => ('Confirmée', const Color(0xFF16804A)),
-      'done' => ('Passée', const Color(0xFF647995)),
-      _ => (statut, const Color(0xFF647995)),
+      'done' => ('Passée', const Color(0xFF66748A)),
+      _ => (statut, const Color(0xFF66748A)),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -247,7 +261,7 @@ class _Vide extends StatelessWidget {
     child: Padding(
       padding: const EdgeInsets.all(24),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 40, color: const Color(0xFF91A6BC)),
+        Icon(icon, size: 40, color: const Color(0xFF9AA5B4)),
         const SizedBox(height: 8),
         Text(texte, textAlign: TextAlign.center),
         ?action,

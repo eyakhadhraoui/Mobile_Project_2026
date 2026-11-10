@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../services/ai_chat_service.dart';
 
+/// Retire la mise en forme Markdown des réponses de l'assistant, affichées en texte simple.
+String texteAssistant(String brut) => brut
+    .replaceAllMapped(RegExp(r'\*\*(.+?)\*\*'), (m) => m[1]!)
+    .replaceAllMapped(RegExp(r'^(\s*)\*\s+', multiLine: true), (m) => '${m[1]}• ');
+
 class AiChatScreen extends StatefulWidget {
   const AiChatScreen({super.key});
 
@@ -63,13 +68,13 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFF3F8FD),
+    backgroundColor: const Color(0xFFFBFCFE),
     appBar: AppBar(
-      backgroundColor: const Color(0xFFF3F8FD),
+      backgroundColor: const Color(0xFFFBFCFE),
       title: const Row(
         children: [
           CircleAvatar(
-            backgroundColor: Color(0xFF326D98),
+            backgroundColor: Color(0xFF0F3D75),
             child: Icon(Icons.auto_awesome, color: Colors.white, size: 20),
           ),
           SizedBox(width: 10),
@@ -102,7 +107,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                         Icon(
                           Icons.forum_outlined,
                           size: 54,
-                          color: Color(0xFF326D98),
+                          color: Color(0xFF0F3D75),
                         ),
                         SizedBox(height: 14),
                         Text(
@@ -111,14 +116,14 @@ class _AiChatScreenState extends State<AiChatScreen> {
                           style: TextStyle(
                             fontSize: 19,
                             fontWeight: FontWeight.w700,
-                            color: Color(0xFF102A43),
+                            color: Color(0xFF14263F),
                           ),
                         ),
                         SizedBox(height: 8),
                         Text(
                           'Demande-moi de l’aide sur les annonces, les événements, ton logement ou les réclamations.',
                           textAlign: TextAlign.center,
-                          style: TextStyle(color: Color(0xFF52677B)),
+                          style: TextStyle(color: Color(0xFF66748A)),
                         ),
                       ],
                     ),
@@ -166,7 +171,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                       ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(26),
-                        borderSide: const BorderSide(color: Color(0xFFD7E3EF)),
+                        borderSide: const BorderSide(color: Color(0xFFE4EAF2)),
                       ),
                     ),
                   ),
@@ -176,7 +181,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   onPressed: _sending ? null : _send,
                   icon: const Icon(Icons.arrow_upward),
                   style: IconButton.styleFrom(
-                    backgroundColor: const Color(0xFF326D98),
+                    backgroundColor: const Color(0xFF0F3D75),
                     foregroundColor: Colors.white,
                   ),
                 ),
@@ -204,14 +209,14 @@ class _ChatBubble extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
       decoration: BoxDecoration(
-        color: fromUser ? const Color(0xFF326D98) : Colors.white,
+        color: fromUser ? const Color(0xFF0F3D75) : Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: fromUser ? null : Border.all(color: const Color(0xFFD7E3EF)),
+        border: fromUser ? null : Border.all(color: const Color(0xFFE4EAF2)),
       ),
       child: Text(
-        text,
+        fromUser ? text : texteAssistant(text),
         style: TextStyle(
-          color: fromUser ? Colors.white : const Color(0xFF102A43),
+          color: fromUser ? Colors.white : const Color(0xFF14263F),
           height: 1.35,
         ),
       ),

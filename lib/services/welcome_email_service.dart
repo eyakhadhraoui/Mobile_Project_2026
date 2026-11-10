@@ -19,11 +19,11 @@ class WelcomeEmailService {
 
   static const _baseEndpoint = String.fromEnvironment(
     'ACCOUNT_API_URL',
-    defaultValue: '',
+    defaultValue: 'http://10.0.2.2:6500',
   );
   static const _allowEmulatorHttp = bool.fromEnvironment(
     'ALLOW_INSECURE_MAIL_API',
-    defaultValue: false,
+    defaultValue: true,
   );
 
   Future<WelcomeEmailStatus> sendWelcome({
@@ -35,6 +35,14 @@ class WelcomeEmailService {
       'firstName': firstName.trim(),
     }, success: WelcomeEmailStatus.sent);
   }
+
+  /// Code de réinitialisation : le nom du compte n'est pas connu à ce stade.
+  Future<WelcomeEmailStatus> sendPasswordResetCode({required String email}) =>
+      _post('/verification-email', {
+        'email': email.trim(),
+        'firstName': 'Utilisateur',
+        'purpose': 'password_reset',
+      }, success: WelcomeEmailStatus.sent);
 
   Future<WelcomeEmailStatus> verifyCode({required String email, required String code}) async =>
       (await verifyCodeForToken(email: email, code: code)).status;

@@ -8,7 +8,7 @@ import '../services/mot_de_passe_service.dart';
 const _rouge = Color(0xFFC53030);
 const _orange = Color(0xFFB7791F);
 const _vert = Color(0xFF16804A);
-const _gris = Color(0xFF647995);
+const _gris = Color(0xFF66748A);
 
 /// À placer sous le champ « mot de passe » : force (barre colorée) et résultat
 /// de la vérification des fuites, lus dans le [MotDePasseProvider] de l'écran.

@@ -9,4 +9,11 @@ class AppRoutes {
   static const complaints = '/complaints';
   static const complaintForm = '/complaints/new';
   static const complaintDetail = '/complaints/detail';
+  static const maintenanceForm = '/maintenance/new';
+  static const maintenanceList = '/maintenance';
+  static const covoiturage = '/covoiturage';
+  static const covoituragePublier = '/covoiturage/publier';
+  static const covoiturageNotifications = '/covoiturage/notifications';
+  static const covoiturageAlertes = '/covoiturage/alertes';
+  static const covoiturageAlerteFormulaire = '/covoiturage/alertes/formulaire';
 }

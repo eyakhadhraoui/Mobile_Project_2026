@@ -1,14 +1,23 @@
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:latlong2/latlong.dart' show LatLng;
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/utils/validators.dart';
+import '../../models/trajet.dart';
 import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/mot_de_passe_provider.dart';
+import '../../services/geocodage_service.dart';
 import '../../services/welcome_email_service.dart';
 import '../../widgets/indicateur_mot_de_passe.dart';
+import '../covoiturage/choisir_position_screen.dart';
 import 'email_verification_dialog.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -34,8 +43,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _verification = MotDePasseProvider();
   bool _verificationEnCours = false;
 
+  /// Photo choisie : copiée dans le dossier de l'application une fois le compte vérifié.
+  String? _photoChoisie;
+
+  /// Faculté de l'étudiant, placée sur la carte.
+  final _nomFac = TextEditingController();
+  final _geocodage = GeocodageService();
+  LatLng? _positionFac;
+  bool _rechercheFac = false;
+
   @override
   void dispose() {
+    _geocodage.fermer();
+    _nomFac.dispose();
     _verification.dispose();
     _nameController.dispose();
     _emailController.dispose();
@@ -45,8 +65,85 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
+  void _message(String texte) => ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(texte)));
+
+  Future<void> _choisirPhoto() async {
+    try {
+      final image = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 82,
+        maxWidth: 1024,
+      );
+      if (image != null && mounted) {
+        setState(() => _photoChoisie = image.path);
+      }
+    } on PlatformException {
+      if (mounted) _message('Impossible d’ouvrir la galerie.');
+    }
+  }
+
+  /// La photo est facultative : un échec de copie ne doit pas bloquer le compte.
+  Future<String?> _copierPhoto(String userId) async {
+    final source = _photoChoisie;
+    if (source == null) return null;
+    try {
+      final documents = await getApplicationDocumentsDirectory();
+      final dossier = Directory(p.join(documents.path, 'profile_photos'));
+      await dossier.create(recursive: true);
+      final copie = await File(source).copy(
+        p.join(dossier.path, '${userId}_${p.basename(source)}'),
+      );
+      return copie.path;
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  Future<void> _choisirFac() async {
+    final point = await Navigator.of(context).push<LatLng>(
+      MaterialPageRoute(
+        builder: (_) => ChoisirPositionScreen(
+          titre: 'Localisation de ma fac',
+          zone: 'tunis',
+          initiale: _positionFac,
+          choixVille: true,
+        ),
+      ),
+    );
+    if (point == null || !mounted) return;
+    setState(() {
+      _positionFac = point;
+      _rechercheFac = true;
+    });
+    String? lieu;
+    try {
+      lieu = await _geocodage.lieuDe(point.latitude, point.longitude);
+    } on GeocodageIndisponibleException {
+      lieu = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      _rechercheFac = false;
+      if (lieu != null) _nomFac.text = lieu;
+    });
+  }
+
+  /// La faculté n'est conservée que pour un compte étudiant.
+  Map<String, dynamic> _preferencesInitiales() {
+    final position = _positionFac;
+    if (_role != UserRole.locataire || position == null) return const {};
+    return {
+      Universite.clePreference: Universite(
+        nom: _nomFac.text.trim(),
+        lat: position.latitude,
+        lon: position.longitude,
+      ).toMap(),
+    };
+  }
+
   Future<void> _register() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (_rechercheFac || !_formKey.currentState!.validate()) return;
     if (!_acceptedTerms) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Veuillez accepter les conditions.')),
@@ -70,7 +167,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       email: _emailController.text.trim(),
       telephone: _phoneController.text.trim(),
       rolePrincipal: _role,
-      preferences: const {},
+      preferences: _preferencesInitiales(),
     );
 
     try {
@@ -127,12 +224,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
         if (mounted) Navigator.of(context).pop();
         return;
       }
-      await auth.register(
-        user: user,
-        password: _passwordController.text,
-        verificationToken: verificationToken,
-      );
+      final photo = await _copierPhoto(user.id);
+      try {
+        await auth.register(
+          user: user.copyWith(photo: photo),
+          password: _passwordController.text,
+          verificationToken: verificationToken,
+        );
+      } catch (_) {
+        if (photo != null) await File(photo).delete();
+        rethrow;
+      }
       if (!mounted) return;
+      if (_photoChoisie != null && photo == null) {
+        _message('Photo non enregistrée : ajoutez-la depuis votre profil.');
+      }
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -179,34 +285,45 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(20),
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
                       decoration: BoxDecoration(
-                        color: theme.colorScheme.primaryContainer.withValues(
-                          alpha: .55,
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            theme.colorScheme.primaryContainer,
+                            theme.colorScheme.primaryContainer.withValues(
+                              alpha: .35,
+                            ),
+                          ],
                         ),
                         borderRadius: BorderRadius.circular(24),
                       ),
-                      child: Row(
+                      child: Column(
                         children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Rejoignez-nous !',
-                                  style: theme.textTheme.titleLarge,
-                                ),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'Tous vos services du quotidien, au même endroit.',
-                                ),
-                              ],
-                            ),
+                          _AvatarInscription(
+                            chemin: _photoChoisie,
+                            onTap: _choisirPhoto,
                           ),
-                          Icon(
-                            Icons.home_work_outlined,
-                            size: 56,
-                            color: theme.colorScheme.primary,
+                          const SizedBox(height: 12),
+                          Text(
+                            'Rejoignez-nous !',
+                            style: theme.textTheme.titleLarge,
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Tous vos services du quotidien, au même endroit.',
+                            textAlign: TextAlign.center,
+                          ),
+                          TextButton(
+                            onPressed: _photoChoisie == null
+                                ? _choisirPhoto
+                                : () => setState(() => _photoChoisie = null),
+                            child: Text(
+                              _photoChoisie == null
+                                  ? 'Ajouter une photo (facultatif)'
+                                  : 'Retirer la photo',
+                            ),
                           ),
                         ],
                       ),
@@ -332,6 +449,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                       ],
                     ),
+                    if (_role == UserRole.locataire) ...[
+                      const SizedBox(height: 16),
+                      _blocFac(theme),
+                    ],
+                    const SizedBox(height: 8),
                     CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
                       controlAffinity: ListTileControlAffinity.leading,
@@ -345,7 +467,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     const SizedBox(height: 8),
                     Consumer<AuthProvider>(
                       builder: (context, auth, _) => FilledButton(
-                        onPressed: auth.isLoading || _verificationEnCours ? null : _register,
+                        onPressed: auth.isLoading || _verificationEnCours || _rechercheFac ? null : _register,
                         child: auth.isLoading || _verificationEnCours
                             ? const SizedBox.square(
                                 dimension: 22,
@@ -370,6 +492,127 @@ class _RegisterScreenState extends State<RegisterScreen> {
     padding: const EdgeInsets.only(bottom: 8),
     child: Text(label, style: Theme.of(context).textTheme.labelLarge),
   );
+
+  Widget _blocFac(ThemeData theme) {
+    final placee = _positionFac != null;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.school_outlined, color: theme.colorScheme.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Ma fac (facultatif)',
+                  style: theme.textTheme.titleSmall,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Elle sert à calculer le temps de trajet vers les logements.',
+          ),
+          const SizedBox(height: 10),
+          if (placee) ...[
+            TextFormField(
+              controller: _nomFac,
+              maxLength: 120,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Nom de la fac',
+                prefixIcon: Icon(Icons.edit_outlined),
+                counterText: '',
+              ),
+              validator: (value) =>
+                  Validators.required(value, label: 'Le nom de la fac'),
+            ),
+            const SizedBox(height: 10),
+          ],
+          OutlinedButton.icon(
+            onPressed: _rechercheFac ? null : _choisirFac,
+            icon: _rechercheFac
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.map_outlined),
+            label: Text(
+              _rechercheFac
+                  ? 'Recherche du lieu…'
+                  : placee
+                  ? 'Modifier sur la carte'
+                  : 'Choisir sur la carte',
+            ),
+          ),
+          if (placee && !_rechercheFac)
+            TextButton(
+              onPressed: () => setState(() {
+                _positionFac = null;
+                _nomFac.clear();
+              }),
+              child: const Text('Retirer la fac'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AvatarInscription extends StatelessWidget {
+  const _AvatarInscription({required this.chemin, required this.onTap});
+
+  final String? chemin;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final couleurs = Theme.of(context).colorScheme;
+    final image = chemin;
+    return Semantics(
+      button: true,
+      label: 'Choisir une photo de profil',
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            CircleAvatar(
+              radius: 46,
+              backgroundColor: couleurs.surface,
+              foregroundImage: image == null ? null : FileImage(File(image)),
+              child: Icon(
+                Icons.person_outline,
+                size: 46,
+                color: couleurs.primary,
+              ),
+            ),
+            Positioned(
+              right: -2,
+              bottom: -2,
+              child: CircleAvatar(
+                radius: 15,
+                backgroundColor: couleurs.primary,
+                child: Icon(
+                  Icons.photo_camera_outlined,
+                  size: 16,
+                  color: couleurs.onPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _RoleChoice extends StatelessWidget {
@@ -407,7 +650,12 @@ class _RoleChoice extends StatelessWidget {
           children: [
             Icon(icon, color: selected ? color : null, size: 19),
             const SizedBox(width: 8),
-            Text(label, style: TextStyle(color: selected ? color : null)),
+            Flexible(
+              child: Text(
+                label,
+                style: TextStyle(color: selected ? color : null),
+              ),
+            ),
           ],
         ),
       ),

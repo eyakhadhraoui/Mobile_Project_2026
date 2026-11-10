@@ -4,16 +4,20 @@ import 'package:flutter/foundation.dart';
 
 import '../models/annonce.dart';
 import '../services/annonce_cache_service.dart';
+import '../services/annonce_file_service.dart';
 import '../services/annonce_service.dart';
 import '../services/api_client.dart';
 import '../services/heure_service.dart';
 import '../services/notification_service.dart';
+import '../services/photo_storage.dart';
 import '../services/planificateur_service.dart';
 
 class AnnonceProvider extends ChangeNotifier {
   AnnonceProvider({
     AnnonceService? service,
     AnnonceCacheService? cache,
+    AnnonceFileService? file,
+    PhotoStorage? photos,
     PlanificateurService? planificateur,
     HeureService? heure,
     NotificationsPublication? notifications,
@@ -21,14 +25,23 @@ class AnnonceProvider extends ChangeNotifier {
     this.intervallePlanificateur = const Duration(seconds: 30),
   }) : _service = service ?? AnnonceService(),
        _cache = cache ?? AnnonceCacheService(),
+       _photos = photos ?? PhotoStorage(),
        _notifications = notifications ?? const AucuneNotification() {
+    _file = file ?? AnnonceFileService(databaseHelper: _cache.databaseHelper);
     _planificateur = planificateur ?? PlanificateurService(cache: _cache, heure: heure);
   }
 
   final AnnonceService _service;
   final AnnonceCacheService _cache;
+  final PhotoStorage _photos;
+  late final AnnonceFileService _file;
   late final PlanificateurService _planificateur;
   final NotificationsPublication _notifications;
+
+  /// Actions faites sans connexion, dans leur ordre d'envoi.
+  List<OperationAnnonce> _operations = const [];
+  bool _envoiFile = false;
+  String? _refusEnvoi;
 
   /// Rechargement silencieux depuis le serveur (ETag).
   final Duration intervalle;
@@ -62,6 +75,24 @@ class AnnonceProvider extends ChangeNotifier {
   /// Vrai quand la liste affichée vient du cache SQLite (serveur injoignable).
   bool get horsLigne => _horsLigne;
 
+  /// Nombre d'actions qui attendent le retour de la connexion.
+  int get actionsEnAttente => _operations.length;
+
+  /// Vrai si l'annonce a été créée, modifiée ou supprimée sans connexion.
+  bool estEnAttenteEnvoi(String id) => _operations.any(
+    (o) =>
+        o.annonceId == id &&
+        const [TypeOperationAnnonce.ajouter, TypeOperationAnnonce.modifier].contains(o.type),
+  );
+
+  /// Dernière action refusée par le serveur au moment de l'envoi.
+  String? get refusEnvoi => _refusEnvoi;
+
+  void oublierRefusEnvoi() {
+    _refusEnvoi = null;
+    notifyListeners();
+  }
+
   /// Programmation ou annulation en cours, et sa dernière erreur.
   bool get operationEnCours => _operationEnCours;
   Object? get erreurOperation => _erreurOperation;
@@ -91,11 +122,13 @@ class AnnonceProvider extends ChangeNotifier {
     _erreur = null;
     _horsLigne = false;
     _migrationFaite = false;
+    _operations = const [];
+    _refusEnvoi = null;
     if (ancien != null) {
-      // Déconnexion : les notifications et le cache appartiennent à l'ancien compte.
+      // Déconnexion : les notifications appartiennent à l'ancien compte. Le cache
+      // reste, lié à ce compte, pour une reconnexion sans réseau.
       _notificationsPlanifiees.clear();
       _sansEchec(_notifications.annulerTout(), 'annulation des notifications');
-      _sansEchec(_cache.vider(), 'vidage du cache');
     }
     // Appelé pendant le build du ProxyProvider : on notifie après le frame.
     scheduleMicrotask(() async {
@@ -104,6 +137,8 @@ class AnnonceProvider extends ChangeNotifier {
         notifyListeners();
         return;
       }
+      await _afficherDonneesLocales(userId);
+      if (_dispose || userId != _userId) return;
       // Rattrapage au démarrage : publications manquées pendant que le
       // téléphone était éteint ou l'application fermée.
       await rafraichir(recharger: false);
@@ -112,6 +147,163 @@ class AnnonceProvider extends ChangeNotifier {
       _timer = Timer.periodic(intervalle, (_) => charger(silencieux: true).catchError((_) {}));
       _timerPlanificateur = Timer.periodic(intervallePlanificateur, (_) => rafraichir());
     });
+  }
+
+  /// Affiche le contenu de l'appareil sans attendre le serveur.
+  Future<void> _afficherDonneesLocales(String userId) async {
+    try {
+      _operations = await _file.lister(userId);
+    } on Object catch (error) {
+      debugPrint('Lecture de la file d’envoi impossible : $error');
+    }
+    try {
+      final copie = await _cache.lire(userId);
+      if (userId != _userId || _annonces.isNotEmpty) return;
+      _annonces = _avecFile(copie);
+      if (_annonces.isNotEmpty) notifyListeners();
+    } on Object catch (error) {
+      debugPrint('Lecture du cache impossible : $error');
+    }
+  }
+
+  List<Annonce> _avecFile(List<Annonce> base) => _operations.fold(base, _appliquer);
+
+  /// Résultat attendu d'une action en file, en attendant la réponse du serveur.
+  List<Annonce> _appliquer(List<Annonce> liste, OperationAnnonce op) {
+    final copie = [...liste];
+    final index = copie.indexWhere((a) => a.id == op.annonceId);
+    final actuelle = index < 0 ? null : copie[index];
+    switch (op.type) {
+      case TypeOperationAnnonce.ajouter:
+        final annonce = Annonce.fromJson(op.donnees);
+        if (index >= 0) {
+          copie[index] = annonce;
+        } else {
+          copie.insert(0, annonce);
+        }
+      case TypeOperationAnnonce.modifier:
+        if (index >= 0) copie[index] = Annonce.fromJson(op.donnees);
+      case TypeOperationAnnonce.supprimer:
+        if (index >= 0) copie.removeAt(index);
+      case TypeOperationAnnonce.aimer:
+        final aime = op.donnees['liked'] == true;
+        if (actuelle != null && actuelle.aimeParMoi != aime) {
+          copie[index] = actuelle.copyWith(aimeParMoi: aime, likes: actuelle.likes + (aime ? 1 : -1));
+        }
+      case TypeOperationAnnonce.noter:
+        if (actuelle != null) copie[index] = actuelle.copyWith(maNote: op.donnees['note'] as int);
+      case TypeOperationAnnonce.commenter:
+        if (actuelle != null) copie[index] = actuelle.copyWith(nbCommentaires: actuelle.nbCommentaires + 1);
+    }
+    return copie;
+  }
+
+  /// Vrai si l'annonce n'existe encore que sur cet appareil.
+  bool _creeeHorsLigne(String id) =>
+      _operations.any((o) => o.annonceId == id && o.type == TypeOperationAnnonce.ajouter);
+
+  /// Enregistre une action. Si [remplace] contient le type d'une action déjà en
+  /// file pour cette annonce, celle-ci est mise à jour au lieu d'en ajouter une.
+  Future<void> _enFile(
+    TypeOperationAnnonce type,
+    String annonceId,
+    Map<String, dynamic> donnees, {
+    Set<TypeOperationAnnonce> remplace = const {},
+  }) async {
+    final userId = _userId;
+    if (userId == null) throw const ApiException('Session expirée : reconnectez-vous.', status: 401);
+    final existante = _operations
+        .where((o) => o.annonceId == annonceId && remplace.contains(o.type))
+        .firstOrNull;
+    final OperationAnnonce operation;
+    if (existante != null) {
+      await _file.remplacerDonnees(existante.id, donnees);
+      await _supprimerPhotosLocales(existante);
+      operation = existante.avecDonnees(donnees);
+      _operations = [for (final o in _operations) o.id == existante.id ? operation : o];
+    } else {
+      operation = await _file.ajouter(userId, type, annonceId, donnees);
+      _operations = [..._operations, operation];
+    }
+    _annonces = _appliquer(_annonces, operation);
+    notifyListeners();
+  }
+
+  /// Le sélecteur de photos range ses fichiers dans un dossier temporaire :
+  /// ils doivent être copiés pour durer jusqu'à l'envoi.
+  Future<List<String>> _photosDurables(List<String> photos) async => [
+    for (final photo in photos)
+      ApiClient.isRemotePhoto(photo) ? photo : await _photos.copier(photo),
+  ];
+
+  Future<void> _supprimerPhotosLocales(OperationAnnonce op) async {
+    final photos = op.donnees['photos'];
+    if (photos is! List) return;
+    for (final photo in photos.whereType<String>()) {
+      if (!ApiClient.isRemotePhoto(photo)) await _photos.supprimerSiInterne(photo);
+    }
+  }
+
+  Future<void> _retirerDeFile(OperationAnnonce op) async {
+    await _file.retirer(op.id);
+    await _supprimerPhotosLocales(op);
+    _operations = _operations.where((o) => o.id != op.id).toList();
+  }
+
+  /// Une panne, une session à renouveler ou un compte suspendu peuvent passer :
+  /// l'action reste en file. Un refus du serveur (annonce disparue, données
+  /// invalides) ne changera pas : l'action est abandonnée et signalée.
+  static bool _aRetenter(ApiException error) =>
+      error.horsConnexion ||
+      error.status == 401 ||
+      error.status == 429 ||
+      (error.status ?? 0) >= 500 ||
+      error.code.startsWith('account_');
+
+  /// Envoie les actions en attente, dans l'ordre. S'arrête à la première panne.
+  Future<void> _envoyerFile(String userId) async {
+    if (_envoiFile || _operations.isEmpty) return;
+    _envoiFile = true;
+    try {
+      for (final operation in [..._operations]) {
+        if (userId != _userId) return;
+        try {
+          await _executer(operation);
+        } on ApiException catch (error) {
+          if (_aRetenter(error)) rethrow;
+          final dejaSupprimee = operation.type == TypeOperationAnnonce.supprimer && error.status == 404;
+          if (!dejaSupprimee) _refusEnvoi = 'Action hors ligne refusée par le serveur : ${error.message}';
+        }
+        await _retirerDeFile(operation);
+        _etag = null;
+      }
+    } finally {
+      _envoiFile = false;
+    }
+  }
+
+  Future<void> _executer(OperationAnnonce op) async {
+    Annonce annonce() {
+      final lue = Annonce.fromJson(op.donnees);
+      final date = lue.datePublication;
+      // La date prévue est passée pendant l'absence de réseau : publication immédiate.
+      return date != null && !date.isAfter(DateTime.now()) ? lue.copyWith(datePublication: null) : lue;
+    }
+
+    switch (op.type) {
+      case TypeOperationAnnonce.ajouter:
+        await _service.ajouterDepuisFile(annonce());
+      case TypeOperationAnnonce.modifier:
+        await _service.modifier(annonce());
+      case TypeOperationAnnonce.supprimer:
+        await _service.supprimer(op.annonceId);
+      case TypeOperationAnnonce.aimer:
+        await _service.aimer(op.annonceId, op.donnees['liked'] == true);
+      case TypeOperationAnnonce.noter:
+        await _service.noter(op.annonceId, op.donnees['note'] as int);
+      case TypeOperationAnnonce.commenter:
+        await _service.commenter(op.annonceId, op.donnees['text'] as String);
+    }
   }
 
   /// Recharge la liste. En mode silencieux, l'ETag évite de retélécharger une
@@ -134,12 +326,13 @@ class AnnonceProvider extends ChangeNotifier {
           debugPrint('Migration des annonces locales impossible : $error');
         }
       }
+      await _envoyerFile(userId);
       final page = await _service.lister(etag: silencieux ? _etag : null);
       if (userId != _userId) return;
       _erreur = null;
       _horsLigne = false;
       if (page != null) {
-        _annonces = page.annonces;
+        _annonces = _avecFile(page.annonces);
         _role = page.meRole;
         _moderation = page.moderation;
         _etag = page.etag;
@@ -149,11 +342,11 @@ class AnnonceProvider extends ChangeNotifier {
     } catch (error) {
       if (userId != _userId) return;
       _erreur = error;
-      if (error is ApiException && error.isNetwork) {
+      if (error is ApiException && (error.isNetwork || error.horsConnexion)) {
         _horsLigne = true;
         if (_annonces.isEmpty) {
           try {
-            _annonces = await _cache.lire(userId);
+            _annonces = _avecFile(await _cache.lire(userId));
           } catch (cacheError) {
             debugPrint('Lecture du cache impossible : $cacheError');
           }
@@ -204,16 +397,70 @@ class AnnonceProvider extends ChangeNotifier {
     return _moderation && !auteurAdmin ? StatutAnnonce.enAttente : StatutAnnonce.publiee;
   }
 
+  Future<CorrespondancePhoto?> verifierPhoto(String chemin) => _service.verifierPhoto(chemin);
+
   Future<Annonce> ajouter(Annonce annonce) async {
-    final cree = await _service.ajouter(annonce);
-    _remplacer(cree, ajouterEnTete: true);
-    return cree;
+    try {
+      final cree = await _service.ajouter(annonce);
+      _remplacer(cree, ajouterEnTete: true);
+      return cree;
+    } on ApiException catch (error) {
+      if (!error.horsConnexion) rethrow;
+      return _ajouterHorsLigne(annonce);
+    }
+  }
+
+  Future<Annonce> _ajouterHorsLigne(Annonce annonce) async {
+    final id = 'local_${DateTime.now().microsecondsSinceEpoch}';
+    final photos = await _photosDurables(annonce.photos);
+    final locale = Annonce.fromJson({
+      ...annonce.copyWith(photos: photos).toJson(),
+      'id': id,
+      'statut': annonce.datePublication != null
+          ? StatutAnnonce.programmee.name
+          : _moderation
+          ? StatutAnnonce.enAttente.name
+          : StatutAnnonce.publiee.name,
+      'createdAt': DateTime.now().toUtc().toIso8601String(),
+    });
+    await _enFile(TypeOperationAnnonce.ajouter, id, locale.toJson());
+    return locale;
   }
 
   Future<Annonce> modifier(Annonce annonce) async {
-    final modifiee = await _service.modifier(annonce);
-    _remplacer(modifiee);
-    return modifiee;
+    if (_creeeHorsLigne(annonce.id)) return _modifierHorsLigne(annonce);
+    try {
+      final modifiee = await _service.modifier(annonce);
+      _remplacer(modifiee);
+      return modifiee;
+    } on ApiException catch (error) {
+      if (!error.horsConnexion) rethrow;
+      return _modifierHorsLigne(annonce);
+    }
+  }
+
+  Future<Annonce> _modifierHorsLigne(Annonce annonce) async {
+    final actuelle = parId(annonce.id);
+    if (actuelle == null) throw const ApiException('Annonce introuvable sur cet appareil.', status: 404);
+    final photos = await _photosDurables(annonce.photos);
+    final champs = annonce.copyWith(photos: photos).toPayload();
+    final programmee = annonce.datePublication != null;
+    final locale = Annonce.fromJson({
+      ...actuelle.toJson(),
+      ...champs,
+      'statut': programmee
+          ? StatutAnnonce.programmee.name
+          : actuelle.estProgrammee
+          ? _statutCible(actuelle).name
+          : actuelle.statut.name,
+    });
+    await _enFile(
+      TypeOperationAnnonce.modifier,
+      annonce.id,
+      locale.toJson(),
+      remplace: const {TypeOperationAnnonce.ajouter, TypeOperationAnnonce.modifier},
+    );
+    return locale;
   }
 
   /// Programme la publication de [annonce] à [date] (UTC ou locale).
@@ -252,38 +499,110 @@ class AnnonceProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> _supprimerHorsLigne(String id) async {
+    final jamaisEnvoyee = _creeeHorsLigne(id);
+    for (final operation in _operations.where((o) => o.annonceId == id).toList()) {
+      await _retirerDeFile(operation);
+    }
+    if (!jamaisEnvoyee) await _enFile(TypeOperationAnnonce.supprimer, id, const {});
+  }
+
   Future<void> supprimer(String id) async {
-    await _service.supprimer(id);
+    if (_creeeHorsLigne(id)) {
+      await _supprimerHorsLigne(id);
+    } else {
+      try {
+        await _service.supprimer(id);
+      } on ApiException catch (error) {
+        if (!error.horsConnexion) rethrow;
+        await _supprimerHorsLigne(id);
+      }
+    }
     _annonces = _annonces.where((a) => a.id != id).toList();
     _etag = null;
     await _oublierNotification(id);
-    _sansEchec(_cache.supprimer(id), 'suppression du cache');
+    if (!_operations.any((o) => o.annonceId == id)) {
+      _sansEchec(_cache.supprimer(id), 'suppression du cache');
+    }
     notifyListeners();
   }
 
   Future<void> changerStatut(String id, StatutAnnonce statut, {String motif = ''}) async =>
       _remplacer(await _service.changerStatut(id, statut, motif: motif));
 
-  Future<void> noter(String id, int note) async => _remplacer(await _service.noter(id, note));
+  Future<void> noter(String id, int note) async {
+    Future<void> enFile() => _enFile(
+      TypeOperationAnnonce.noter,
+      id,
+      {'note': note},
+      remplace: const {TypeOperationAnnonce.noter},
+    );
+    if (_creeeHorsLigne(id)) return enFile();
+    try {
+      _remplacer(await _service.noter(id, note));
+    } on ApiException catch (error) {
+      if (!error.horsConnexion) rethrow;
+      await enFile();
+    }
+  }
 
-  /// Like optimiste : l'interface change tout de suite, puis revient en arrière en cas d'échec.
+  /// Like optimiste : l'interface change tout de suite. Sans connexion il attend
+  /// en file ; si le serveur le refuse, il revient en arrière.
   Future<void> basculerLike(Annonce annonce) async {
     final aime = !annonce.aimeParMoi;
+    Future<void> enFile() => _enFile(
+      TypeOperationAnnonce.aimer,
+      annonce.id,
+      {'liked': aime},
+      remplace: const {TypeOperationAnnonce.aimer},
+    );
     _remplacer(annonce.copyWith(aimeParMoi: aime, likes: annonce.likes + (aime ? 1 : -1)));
+    if (_creeeHorsLigne(annonce.id)) return enFile();
     try {
       await _service.aimer(annonce.id, aime);
+    } on ApiException catch (error) {
+      if (error.horsConnexion) return enFile();
+      _remplacer(annonce);
+      rethrow;
     } catch (_) {
       _remplacer(annonce);
       rethrow;
     }
   }
 
-  Future<List<CommentaireAnnonce>> commentaires(String id) => _service.commentaires(id);
+  /// Commentaires connus (copie locale sans connexion), plus ceux en attente d'envoi.
+  Future<List<CommentaireAnnonce>> commentaires(String id) async {
+    List<CommentaireAnnonce> connus = const [];
+    if (!_creeeHorsLigne(id)) {
+      try {
+        connus = await _service.commentaires(id);
+      } on ApiException catch (error) {
+        if (!error.horsConnexion) rethrow;
+      }
+    }
+    return [
+      ...connus,
+      for (final o in _operations)
+        if (o.annonceId == id && o.type == TypeOperationAnnonce.commenter)
+          CommentaireAnnonce(userId: _userId ?? '', auteur: 'Vous (en attente d’envoi)', texte: o.donnees['text'] as String),
+    ];
+  }
 
   Future<List<CommentaireAnnonce>> commenter(String id, String texte) async {
-    final result = await _service.commenter(id, texte);
-    charger(silencieux: true).catchError((_) {});
-    return result;
+    Future<List<CommentaireAnnonce>> enFile() async {
+      await _enFile(TypeOperationAnnonce.commenter, id, {'text': texte});
+      return commentaires(id);
+    }
+
+    if (_creeeHorsLigne(id)) return enFile();
+    try {
+      final result = await _service.commenter(id, texte);
+      charger(silencieux: true).catchError((_) {});
+      return result;
+    } on ApiException catch (error) {
+      if (!error.horsConnexion) rethrow;
+      return enFile();
+    }
   }
 
   void _remplacer(Annonce annonce, {bool ajouterEnTete = false}) {

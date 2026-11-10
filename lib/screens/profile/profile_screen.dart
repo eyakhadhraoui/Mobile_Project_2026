@@ -9,11 +9,48 @@ import 'package:provider/provider.dart';
 import '../../core/constants/langues.dart';
 import '../../models/complaint_model.dart';
 import '../../models/user_model.dart';
+import '../../providers/annonce_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/complaint_provider.dart';
+import '../../providers/demande_provider.dart';
 import '../../providers/user_provider.dart';
+import '../admin/account_admin_screen.dart';
+import '../announcements/announcements_screen.dart';
 import '../complaints/complaints_screen.dart';
 import 'change_password_screen.dart';
+
+/// Logements loués par le locataire, avec leurs demandes de maintenance.
+class _MesLogements extends StatelessWidget {
+  const _MesLogements();
+
+  String _date(String iso) {
+    final parties = iso.split('-');
+    return parties.length == 3 ? '${parties[2]}/${parties[1]}/${parties[0]}' : iso;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<DemandeProvider>();
+    final logements = provider.logements;
+    return Card(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const Padding(padding: EdgeInsets.fromLTRB(16, 14, 16, 4), child: Text('Mes logements', style: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF14263F)))),
+      if (logements.isEmpty)
+        const Padding(padding: EdgeInsets.fromLTRB(16, 4, 16, 14), child: Text('Aucun logement loué pour le moment.', style: TextStyle(fontSize: 12, color: Color(0xFF66748A))))
+      else
+        for (final logement in logements)
+          _MenuRow(
+            icon: Icons.home_outlined,
+            title: logement.titre,
+            subtitle: [
+              if (logement.adresse.isNotEmpty) logement.adresse,
+              'Propriétaire : ${logement.proprietaireNom}',
+              'Jusqu’au ${_date(logement.fin)} · ${provider.demandesDuLogement(logement.annonceId)} demande(s) de maintenance',
+            ].join('\n'),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => AnnouncementDetailScreen(annonceId: logement.annonceId))),
+          ),
+    ]));
+  }
+}
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -29,6 +66,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final currentUserId = context.watch<AuthProvider>().currentUserId;
     final myComplaints = complaints.where((item) => item.userId == currentUserId && !item.isDraft).toList();
     final user = provider.user;
+    // Le rôle administrateur est décidé par le serveur (ADMIN_EMAILS).
+    final estAdmin = context.watch<AnnonceProvider>().estAdmin || user?.rolePrincipal == UserRole.administrateur;
     return Scaffold(
       appBar: AppBar(title: const Text('Mon profil'), actions: [IconButton.filledTonal(onPressed: user == null ? null : () => _editProfile(user), icon: const Icon(Icons.settings_outlined), tooltip: 'Paramètres du compte'), const SizedBox(width: 12)]),
       body: provider.isLoading && user == null
@@ -36,17 +75,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
           : user == null
               ? Center(child: Text(provider.error ?? 'Profil introuvable.'))
               : ListView(padding: const EdgeInsets.fromLTRB(18, 14, 18, 28), children: [
-                  Container(padding: const EdgeInsets.fromLTRB(18, 20, 18, 18), decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFFE7F4FF), Color(0xFFF3F9FE)]), borderRadius: BorderRadius.circular(24)), child: Column(children: [
+                  Padding(padding: const EdgeInsets.fromLTRB(2, 2, 2, 4), child: Row(children: [
                     GestureDetector(onTap: () => _changePhoto(user), child: Stack(alignment: Alignment.bottomRight, children: [
-                      CircleAvatar(radius: 46, backgroundColor: const Color(0xFF8AC7F3), foregroundImage: user.photo == null ? null : FileImage(File(user.photo!)), child: user.photo == null ? Text(_initials(user), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 24)) : null),
-                      Container(width: 27, height: 27, decoration: BoxDecoration(color: const Color(0xFF172B45), borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white, width: 2)), child: const Icon(Icons.camera_alt_outlined, color: Colors.white, size: 15)),
+                      CircleAvatar(radius: 42, backgroundColor: const Color(0xFF1F66B0), foregroundImage: user.photo == null ? null : FileImage(File(user.photo!)), child: user.photo == null ? Text(_initials(user), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 24)) : null),
+                      Container(width: 27, height: 27, decoration: BoxDecoration(color: const Color(0xFF0F3D75), shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)), child: const Icon(Icons.camera_alt_outlined, color: Colors.white, size: 14)),
                     ])),
-                    const SizedBox(height: 12),
-                    Text('${user.prenom} ${user.nom}'.trim(), style: const TextStyle(fontSize: 20, color: Color(0xFF172B45))),
-                    const SizedBox(height: 5),
-                    Text(_roleName(user.rolePrincipal), style: const TextStyle(color: Color(0xFF647995), fontSize: 12)),
-                    const SizedBox(height: 9),
-                    _VerificationBadge(verified: user.emailVerified),
+                    const SizedBox(width: 16),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('${user.prenom} ${user.nom}'.trim(), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: Color(0xFF14263F))),
+                      const SizedBox(height: 3),
+                      Text(_roleName(user.rolePrincipal), style: const TextStyle(color: Color(0xFF66748A), fontSize: 12)),
+                      const SizedBox(height: 8),
+                      _VerificationBadge(verified: user.emailVerified),
+                    ])),
                   ])),
                   const SizedBox(height: 14),
                   Card(child: Row(children: [
@@ -55,6 +96,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     _Metric(value: '${myComplaints.where((item) => item.status == ComplaintStatus.cloturee).length}', label: 'Résolues'),
                   ])),
                   const SizedBox(height: 14),
+                  if (user.rolePrincipal == UserRole.locataire) ...[const _MesLogements(), const SizedBox(height: 14)],
                   Card(child: Column(children: [
                     _MenuRow(icon: Icons.assignment_outlined, title: 'Mon activité', subtitle: 'Réclamations et demandes', onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ComplaintsScreen()))),
                     const Divider(height: 1, indent: 64),
@@ -70,12 +112,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const Divider(height: 1, indent: 64),
                     SwitchListTile(secondary: const _MenuIcon(icon: Icons.g_translate), title: const Text('Traduction automatique', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)), subtitle: const Text('Traduire les réponses à l’ouverture d’une réclamation', style: TextStyle(fontSize: 10)), value: user.preferences['traductionAuto'] as bool? ?? false, onChanged: (enabled) { final preferences = Map<String, dynamic>.from(user.preferences)..['traductionAuto'] = enabled; context.read<UserProvider>().save(_copyUser(user, preferences: preferences)); }),
                     const Divider(height: 1, indent: 64),
+                    if (estAdmin) ...[
+                      _MenuRow(icon: Icons.admin_panel_settings_outlined, title: 'Gestion des comptes', subtitle: 'Valider ou bloquer les comptes', onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const AccountAdminScreen()))),
+                      const Divider(height: 1, indent: 64),
+                    ],
                     _MenuRow(icon: Icons.help_outline, title: 'Aide et assistance', subtitle: 'Informations sur l’application', onTap: () => showAboutDialog(context: context, applicationName: 'StudentHub', applicationVersion: '1.0.0', children: const [Text('Application locale de gestion des utilisateurs et des réclamations.')])),
                   ])),
                   const SizedBox(height: 18),
                   TextButton.icon(onPressed: () => context.read<AuthProvider>().signOut(), icon: const Icon(Icons.logout, color: Color(0xFFEF6565)), label: const Text('Se déconnecter', style: TextStyle(color: Color(0xFFEF6565)))),
                   TextButton.icon(onPressed: _deleteAccount, icon: const Icon(Icons.delete_outline, color: Color(0xFFEF6565)), label: const Text('Supprimer mon compte et mes réclamations', style: TextStyle(color: Color(0xFFEF6565), fontSize: 12))),
-                  const Center(child: Text('StudentHub · Version 1.0.0', style: TextStyle(fontSize: 10, color: Color(0xFF93A5B9)))),
+                  const Center(child: Text('StudentHub · Version 1.0.0', style: TextStyle(fontSize: 10, color: Color(0xFF9AA5B4)))),
                 ]),
     );
   }
@@ -149,22 +195,22 @@ class _MenuIcon extends StatelessWidget {
   const _MenuIcon({required this.icon});
   final IconData icon;
   @override
-  Widget build(BuildContext context) => Container(width: 42, height: 42, decoration: BoxDecoration(color: const Color(0xFFEEF6FC), borderRadius: BorderRadius.circular(14)), child: Icon(icon, color: Theme.of(context).colorScheme.primary));
+  Widget build(BuildContext context) => Container(width: 42, height: 42, decoration: BoxDecoration(color: const Color(0xFFE8F0FA), borderRadius: BorderRadius.circular(14)), child: Icon(icon, color: Theme.of(context).colorScheme.primary));
 }
 
 class _MenuRow extends StatelessWidget {
   const _MenuRow({required this.icon, required this.title, required this.subtitle, required this.onTap});
   final IconData icon; final String title; final String subtitle; final VoidCallback onTap;
   @override
-  Widget build(BuildContext context) => ListTile(leading: _MenuIcon(icon: icon), title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)), subtitle: Text(subtitle, style: const TextStyle(fontSize: 10)), trailing: const Icon(Icons.chevron_right, color: Color(0xFF91A6BC)), onTap: onTap);
+  Widget build(BuildContext context) => ListTile(leading: _MenuIcon(icon: icon), title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)), subtitle: Text(subtitle, style: const TextStyle(fontSize: 10)), trailing: const Icon(Icons.chevron_right, color: Color(0xFF9AA5B4)), onTap: onTap);
 }
 
 class _Metric extends StatelessWidget {
   const _Metric({required this.value, required this.label}); final String value; final String label;
   @override
-  Widget build(BuildContext context) => Expanded(child: Padding(padding: const EdgeInsets.symmetric(vertical: 13), child: Column(children: [Text(value, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: Color(0xFF172B45))), const SizedBox(height: 4), Text(label, style: const TextStyle(fontSize: 9, color: Color(0xFF647995)))])));
+  Widget build(BuildContext context) => Expanded(child: Padding(padding: const EdgeInsets.symmetric(vertical: 13), child: Column(children: [Text(value, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: Color(0xFF14263F))), const SizedBox(height: 4), Text(label, style: const TextStyle(fontSize: 9, color: Color(0xFF66748A)))])));
 }
-class _MetricDivider extends StatelessWidget { const _MetricDivider(); @override Widget build(BuildContext context) => Container(height: 50, width: 1, color: const Color(0xFFE5EDF4)); }
+class _MetricDivider extends StatelessWidget { const _MetricDivider(); @override Widget build(BuildContext context) => Container(height: 50, width: 1, color: const Color(0xFFE4EAF2)); }
 
 String _initials(UserModel user) => '${user.prenom.isNotEmpty ? user.prenom[0] : ''}${user.nom.isNotEmpty ? user.nom[0] : ''}'.toUpperCase();
 String _roleName(UserRole role) => switch (role) { UserRole.locataire => 'Étudiant / locataire', UserRole.proprietaire => 'Propriétaire', UserRole.prestataire => 'Prestataire de services', UserRole.administrateur => 'Administrateur' };

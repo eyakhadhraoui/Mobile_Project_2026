@@ -101,12 +101,12 @@ class _IncidentScreenState extends State<IncidentScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Text(incident.batiment, style: const TextStyle(fontSize: 16, color: Color(0xFF172B45))),
+                  Text(incident.batiment, style: const TextStyle(fontSize: 16, color: Color(0xFF14263F))),
                   const SizedBox(height: 6),
                   Text(
                     '${incident.reclamations.length} signalements · ${incident.nombreEtudiants} étudiant(s) · '
                     'du ${_jour(incident.debut)} au ${_jour(incident.fin)}',
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF647995)),
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF66748A)),
                   ),
                 ],
               ),
@@ -131,7 +131,7 @@ class _IncidentScreenState extends State<IncidentScreen> {
           const SizedBox(height: 4),
           const Text(
             'Chaque étudiant la reçoit dans les échanges de sa réclamation (et peut la traduire).',
-            style: TextStyle(fontSize: 12, color: Color(0xFF647995)),
+            style: TextStyle(fontSize: 12, color: Color(0xFF66748A)),
           ),
           const SizedBox(height: 10),
           TextField(
@@ -213,7 +213,7 @@ class BandeauIncidents extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(complaintCategoryLabel(incident.categorie), style: const TextStyle(fontSize: 12)),
-                Text(incident.batiment, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: Color(0xFF647995))),
+                Text(incident.batiment, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: Color(0xFF66748A))),
               ],
             ),
           ),

@@ -57,7 +57,7 @@ class HousingService {
   Future<({List<DemandeLogement> recues, List<DemandeLogement> envoyees})> visites() => _paire('/visites');
 
   Future<List<Map<String, dynamic>>> disponibilites() async =>
-      (await _api.get('/disponibilites') as List).map((item) => Map<String, dynamic>.from(item as Map)).toList();
+      (await _api.getAvecCache('/disponibilites') as List).map((item) => Map<String, dynamic>.from(item as Map)).toList();
 
   Future<void> ajouterDisponibilite(Map<String, dynamic> disponibilite) => _api.post('/disponibilites', disponibilite);
 
@@ -72,12 +72,12 @@ class HousingService {
   Future<void> repondreDemande(String id, String statut) =>
       _api.post('/demandes-location/$id/statut', {'statut': statut});
 
-  Future<List<ActiviteAnnonce>> activite() async => (await _api.get('/activite') as List)
+  Future<List<ActiviteAnnonce>> activite() async => (await _api.getAvecCache('/activite') as List)
       .map((item) => ActiviteAnnonce(Map<String, dynamic>.from(item as Map)))
       .toList();
 
   Future<({List<DemandeLogement> recues, List<DemandeLogement> envoyees})> _paire(String path) async {
-    final data = Map<String, dynamic>.from(await _api.get(path) as Map);
+    final data = Map<String, dynamic>.from(await _api.getAvecCache(path) as Map);
     List<DemandeLogement> list(String key) => (data[key] as List? ?? const [])
         .map((item) => DemandeLogement(Map<String, dynamic>.from(item as Map)))
         .toList();

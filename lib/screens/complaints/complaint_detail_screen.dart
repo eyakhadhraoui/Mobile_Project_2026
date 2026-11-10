@@ -40,11 +40,11 @@ class _ComplaintDetailScreenState extends State<ComplaintDetailScreen> {
       ),
       body: ListView(padding: const EdgeInsets.fromLTRB(18, 18, 18, 30), children: [
         Card(child: Padding(padding: const EdgeInsets.all(18), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [if (_complaint.isDraft) const Chip(label: Text('Brouillon local')) else _StatusChip(status: _complaint.status), if (!_complaint.isDraft && _complaint.syncStatus == ComplaintSyncStatus.pending) const Padding(padding: EdgeInsets.only(left: 6), child: Chip(avatar: Icon(Icons.cloud_upload_outlined, size: 15), label: Text('À synchroniser'))), const Spacer(), Text(_reference, style: const TextStyle(fontSize: 11, color: Color(0xFF8193AA)))]),
+          Row(children: [if (_complaint.isDraft) const Chip(label: Text('Brouillon local')) else _StatusChip(status: _complaint.status), if (!_complaint.isDraft && _complaint.syncStatus == ComplaintSyncStatus.pending) const Padding(padding: EdgeInsets.only(left: 6), child: Chip(avatar: Icon(Icons.cloud_upload_outlined, size: 15), label: Text('À synchroniser'))), const Spacer(), Text(_reference, style: const TextStyle(fontSize: 11, color: Color(0xFF9AA5B4)))]),
           const SizedBox(height: 13),
-          Text(_complaint.subject, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w600, color: Color(0xFF172B45))),
+          Text(_complaint.subject, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w600, color: Color(0xFF14263F))),
           const SizedBox(height: 8),
-          Text('${_complaint.locationId} · ${complaintPriorityLabel(_complaint.priority)}', style: const TextStyle(fontSize: 12, color: Color(0xFF647995))),
+          Text('${_complaint.locationId} · ${complaintPriorityLabel(_complaint.priority)}', style: const TextStyle(fontSize: 12, color: Color(0xFF66748A))),
         ]))),
         if (context.watch<ComplaintProvider>().incidentPour(_complaint.id) case final incident?) ...[
           const SizedBox(height: 12),
@@ -67,7 +67,7 @@ class _ComplaintDetailScreenState extends State<ComplaintDetailScreen> {
           ),
         ],
         const SizedBox(height: 28),
-        const Text('Suivi de la demande', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Color(0xFF172B45))),
+        const Text('Suivi de la demande', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Color(0xFF14263F))),
         const SizedBox(height: 13),
         if (widget.canManageStatus && !_complaint.isDraft) Align(alignment: Alignment.centerLeft, child: TextButton.icon(onPressed: _chooseStatus, icon: const Icon(Icons.edit_note), label: const Text('Mettre à jour le statut'))),
         ...history.asMap().entries.map((entry) => _TimelineItem(entry: entry.value, isLatest: entry.key == 0, isLast: entry.key == history.length - 1)),
@@ -119,8 +119,8 @@ class _TimelineItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = complaintStatusColor(context, entry.status);
     return IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      SizedBox(width: 43, child: Column(children: [Container(width: 32, height: 32, decoration: BoxDecoration(shape: BoxShape.circle, color: isLatest ? color : const Color(0xFFEAF1F6), border: Border.all(color: isLatest ? color : const Color(0xFFDCE7F1))), child: Icon(isLatest ? Icons.check : Icons.circle, size: isLatest ? 18 : 12, color: isLatest ? Colors.white : const Color(0xFF90A4B8))), if (!isLast) Expanded(child: Container(width: 1, color: const Color(0xFFD6E4F0)))])),
-      Expanded(child: Padding(padding: const EdgeInsets.only(left: 5, top: 1, bottom: 20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(complaintStatusLabel(entry.status), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF172B45))), const SizedBox(height: 5), Text(_statusDescription(entry.status), style: const TextStyle(fontSize: 11, color: Color(0xFF647995))), const SizedBox(height: 5), Text(_dateLabel(entry.date), style: const TextStyle(fontSize: 10, color: Color(0xFF8AA0B8)))]))),
+      SizedBox(width: 43, child: Column(children: [Container(width: 32, height: 32, decoration: BoxDecoration(shape: BoxShape.circle, color: isLatest ? color : const Color(0xFFE8F0FA), border: Border.all(color: isLatest ? color : const Color(0xFFE4EAF2))), child: Icon(isLatest ? Icons.check : Icons.circle, size: isLatest ? 18 : 12, color: isLatest ? Colors.white : const Color(0xFF9AA5B4))), if (!isLast) Expanded(child: Container(width: 1, color: const Color(0xFFE4EAF2)))])),
+      Expanded(child: Padding(padding: const EdgeInsets.only(left: 5, top: 1, bottom: 20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(complaintStatusLabel(entry.status), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF14263F))), const SizedBox(height: 5), Text(_statusDescription(entry.status), style: const TextStyle(fontSize: 11, color: Color(0xFF66748A))), const SizedBox(height: 5), Text(_dateLabel(entry.date), style: const TextStyle(fontSize: 10, color: Color(0xFF9AA5B4)))]))),
     ]));
   }
 }
@@ -131,7 +131,7 @@ class _InfoPanel extends StatelessWidget {
   final String title;
   final String body;
   @override
-  Widget build(BuildContext context) => Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [Icon(icon, size: 19, color: Theme.of(context).colorScheme.primary), const SizedBox(width: 9), Text(title, style: const TextStyle(fontWeight: FontWeight.w700))]), const SizedBox(height: 10), Text(body, style: const TextStyle(height: 1.45, color: Color(0xFF526981)))])));
+  Widget build(BuildContext context) => Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [Icon(icon, size: 19, color: Theme.of(context).colorScheme.primary), const SizedBox(width: 9), Text(title, style: const TextStyle(fontWeight: FontWeight.w700))]), const SizedBox(height: 10), Text(body, style: const TextStyle(height: 1.45, color: Color(0xFF66748A)))])));
 }
 
 class _StatusChip extends StatelessWidget {

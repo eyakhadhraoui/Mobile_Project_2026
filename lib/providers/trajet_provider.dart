@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
+import 'package:latlong2/latlong.dart' show LatLng;
 
 import '../models/annonce.dart';
 import '../models/trajet.dart';
+import '../services/covoiturage_geo.dart';
 import '../services/geocodage_service.dart';
 import '../services/trajet_service.dart';
 
@@ -89,6 +91,41 @@ class TrajetProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Écart toléré entre une fac listée sur l'annonce et la fac de l'étudiant,
+  /// placées chacune sur un point différent du même campus.
+  static const _memeFacKm = 0.5;
+
+  /// Distance à vol d'oiseau entre le logement et la fac de l'étudiant.
+  double? distanceFacKm(Annonce annonce) {
+    final universite = _universite;
+    final (lat, lng) = (annonce.lat, annonce.lng);
+    if (universite == null || lat == null || lng == null) return null;
+    return CovoiturageGeo.distanceExacteKm(LatLng(lat, lng), LatLng(universite.lat, universite.lon));
+  }
+
+  /// Vrai si ce logement publié entoure la fac de l'étudiant.
+  bool presDeMaFac(Annonce annonce) {
+    final universite = _universite;
+    final distance = distanceFacKm(annonce);
+    if (universite == null || distance == null || !annonce.estLogement || !annonce.estPubliee) return false;
+    if (distance <= FacProche.rayonKm) return true;
+    final maFac = LatLng(universite.lat, universite.lon);
+    return annonce.facsProches.any((fac) => CovoiturageGeo.distanceExacteKm(LatLng(fac.lat, fac.lng), maFac) <= _memeFacKm);
+  }
+
+  /// Logements proches de la fac en tête, du plus près au plus loin ; le reste garde son ordre.
+  List<Annonce> _prochesEnTete(List<Annonce> annonces) {
+    final proches = annonces.where(presDeMaFac).toList();
+    if (proches.isEmpty) return annonces;
+    final distances = {for (final a in proches) a.id: distanceFacKm(a)!};
+    final indexes = {for (var i = 0; i < annonces.length; i++) annonces[i].id: i};
+    proches.sort((a, b) {
+      final ecart = distances[a.id]!.compareTo(distances[b.id]!);
+      return ecart != 0 ? ecart : indexes[a.id]!.compareTo(indexes[b.id]!);
+    });
+    return [...proches, ...annonces.where((a) => !distances.containsKey(a.id))];
+  }
+
   /// Applique le filtre et le tri à une liste d'annonces déjà filtrée par l'écran.
   /// Avec le filtre actif, seuls les logements dont le trajet est connu et assez court restent.
   List<Annonce> appliquer(List<Annonce> annonces) {
@@ -109,8 +146,9 @@ class TrajetProvider extends ChangeNotifier {
         final ecart = distance(a).compareTo(distance(b));
         return ecart != 0 ? ecart : indexes[a.id]!.compareTo(indexes[b.id]!);
       });
+      return resultat;
     }
-    return resultat;
+    return _prochesEnTete(resultat);
   }
 
   /// Calcule les trajets des logements publiés. Sans effet si la liste n'a pas
@@ -119,7 +157,7 @@ class TrajetProvider extends ChangeNotifier {
     final universite = _universite;
     if (universite == null) return;
     final logements = annonces.where((a) => a.estLogement && a.estPubliee && a.ville.isNotEmpty).toList();
-    final signature = logements.map((a) => '${a.id}|${a.adresse}|${a.quartier}|${a.ville}').join(';');
+    final signature = logements.map((a) => '${a.id}|${a.adresse}|${a.quartier}|${a.ville}|${a.lat}|${a.lng}').join(';');
     if (signature == _signature) return;
     _signature = signature;
     final generation = ++_generation;
@@ -191,9 +229,12 @@ class TrajetProvider extends ChangeNotifier {
     return calculer(annonces);
   }
 
-  /// Adresse complète d'abord ; à défaut le quartier (position approximative).
-  /// La ville seule serait trop imprécise pour un temps de trajet.
+  /// Point choisi sur la carte d'abord, puis adresse complète ; à défaut le
+  /// quartier (position approximative). La ville seule serait trop imprécise
+  /// pour un temps de trajet.
   Future<(Coordonnees?, bool)> _localiser(Annonce annonce) async {
+    final (lat, lng) = (annonce.lat, annonce.lng);
+    if (lat != null && lng != null) return (Coordonnees(lat: lat, lon: lng), false);
     final complete = [annonce.adresse, annonce.quartier, annonce.ville].where((p) => p.trim().isNotEmpty).join(', ');
     final exacte = await _geocodage.geocoder(complete);
     if (exacte != null) return (exacte, false);

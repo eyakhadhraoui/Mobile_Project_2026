@@ -1,9 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { createAssistantRoutes } from './assistant_reclamations.mjs';
 import { checkPassword, hashPassword, signToken, verifyToken } from './auth.mjs';
+import { analyserImage, chercherProches, creerArbitre, estConfirme, SEUIL_CERTAIN } from './detection_photos.mjs';
+import { createMessagerieRoutes } from './messagerie.mjs';
+import { createMiroirRoutes } from './miroir.mjs';
 import { createStore } from './store.mjs';
 
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
@@ -90,7 +94,7 @@ function sniffImage(buffer) {
   return null;
 }
 
-export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
+export async function createAnnoncesApi({ dataDir, secret, adminEmails, askAssistant = null, guidesAssistant = [], comparerPhotos = null }) {
   const store = createStore(dataDir);
   const users = await store.load('users', {});
   const annonces = await store.load('annonces', []);
@@ -100,6 +104,8 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
   const visits = await store.load('visits', []);
   const rentals = await store.load('rental_requests', []);
   const photos = await store.load('photos', {});
+  const empreintes = await store.load('empreintes_photos', {});
+  const arbitrer = creerArbitre(comparerPhotos);
   const photoDir = path.join(dataDir, 'photos');
   const moderation = adminEmails.size > 0;
   const bootId = randomBytes(4).toString('hex');
@@ -118,8 +124,16 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
     return user ? `${user.prenom} ${user.nom}`.trim() || 'Utilisateur' : 'Utilisateur';
   };
   const publicUser = (user) => ({ id: user.id, email: user.email, prenom: user.prenom, nom: user.nom, telephone: user.telephone || '', role: roleOf(user) });
-  const sessionToken = (user) => signToken({ typ: 'session', sub: user.id, exp: Date.now() + 30 * DAY }, secret);
+  const sessionToken = (user) => signToken({ typ: 'session', sub: user.id, iat: Date.now(), exp: Date.now() + 30 * DAY }, secret);
   const isAdmin = (me) => me.role === 'administrateur';
+  const accountStatus = (user) => (adminEmails.has(user.email) ? 'approved' : user.accountStatus ?? 'approved');
+  /** Refuse l'accès à un compte bloqué ou en attente de validation. */
+  function ensureActive(user) {
+    const status = accountStatus(user);
+    if (status === 'blocked') fail(403, 'account_blocked', 'Ce compte est bloqué. Contactez l’administrateur.');
+    if (status !== 'approved') fail(403, 'account_pending', 'Votre compte attend la validation de l’administrateur.');
+  }
+  const adminView = (user) => ({ ...publicUser(user), accountStatus: accountStatus(user), createdAt: user.createdAt ?? null });
   const ownerIsAdmin = (annonce) => adminEmails.has(users[annonce.proprietaireId]?.email);
   /** Statut d'une annonce dont la programmation arrive à échéance ou est annulée. */
   const statutApresProgrammation = (annonce) => (moderation && !ownerIsAdmin(annonce) ? 'enAttente' : 'publiee');
@@ -163,6 +177,12 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
   };
   const interactionsOf = (id) => interactions[id] || { likes: [], comments: [] };
 
+  /** Le titre et l'image de l'autre annonce ne sont montrés que si elle est publique. */
+  function correspondancePublique(c) {
+    const visible = annonces.find((a) => a.id === c.annonceCibleId)?.statut === 'publiee';
+    return { niveau: c.niveau, raison: c.raison, annonceCibleTitre: visible ? c.annonceCibleTitre : null, photoCible: visible ? c.photoCible : null };
+  }
+
   function view(annonce, me) {
     const state = interactionsOf(annonce.id);
     const notes = Object.values(ratings[annonce.id] || {}).map((rating) => rating.note);
@@ -182,8 +202,20 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
     const header = req.headers.authorization || '';
     const payload = header.startsWith('Bearer ') ? verifyToken(header.slice(7), secret, 'session') : null;
     const user = payload ? users[payload.sub] : null;
-    if (!user) fail(401, 'unauthorized', 'Session expirée : reconnectez-vous.');
+    // Une réinitialisation du mot de passe ferme les sessions ouvertes avant elle.
+    if (!user || (user.passwordResetAt && (payload.iat ?? 0) < user.passwordResetAt)) fail(401, 'unauthorized', 'Session expirée : reconnectez-vous.');
+    ensureActive(user);
     return { ...user, role: roleOf(user) };
+  }
+
+  function validateFacs(value) {
+    if (value === undefined || value === null) return [];
+    if (!Array.isArray(value) || value.length > 20) fail(400, 'invalid_field', 'Liste de facs invalide.');
+    return value.map((fac) => ({
+      nom: text(fac?.nom, 1, 160, 'Le nom de la fac'),
+      lat: number(fac?.lat, -90, 90, 'La latitude de la fac'),
+      lng: number(fac?.lng, -180, 180, 'La longitude de la fac'),
+    }));
   }
 
   function validateAnnonce(body, me, existing) {
@@ -201,10 +233,12 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
       description: text(body.description, 1, 4000, 'La description'),
       photos: [...new Set(photoList)],
       autoriserCommentaires: body.autoriserCommentaires !== false,
-      typeLocation: '', loyer: 0, surface: 0, chambres: 0, etage: null, ville: '', quartier: '', adresse: '',
+      typeLocation: '', loyer: 0, surface: 0, chambres: 0, etage: null, ville: '', quartier: '', adresse: '', lat: null, lng: null, facsProches: [],
     };
     if (categorie === 'Logement') {
       if (!TYPES_LOGEMENT.includes(body.typeLocation)) fail(400, 'invalid_field', 'Type de logement invalide.');
+      // Position facultative, mais toujours complète : latitude et longitude ensemble.
+      const positionFournie = (body.lat ?? body.lng ?? null) !== null;
       Object.assign(result, {
         typeLocation: body.typeLocation,
         loyer: number(body.loyer, 1, 100000, 'Le loyer'),
@@ -214,6 +248,9 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
         ville: text(body.ville, 1, 80, 'La ville'),
         quartier: text(body.quartier, 0, 80, 'Le quartier'),
         adresse: text(body.adresse, 3, 200, 'L’adresse'),
+        lat: positionFournie ? number(body.lat, -90, 90, 'La latitude') : null,
+        lng: positionFournie ? number(body.lng, -180, 180, 'La longitude') : null,
+        facsProches: positionFournie ? validateFacs(body.facsProches) : [],
       });
     }
     return result;
@@ -224,9 +261,69 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
       const match = photo.match(PHOTO_PATH);
       if (!match) continue;
       delete photos[match[1]];
+      delete empreintes[match[1]];
       try { await unlink(path.join(photoDir, match[1])); } catch { /* déjà supprimée */ }
     }
+    await store.save('empreintes_photos');
   }
+
+  // ---------- Fiabilité des annonces : photos déjà publiées ----------
+  const nomPhoto = (chemin) => chemin.match(PHOTO_PATH)?.[1];
+  const mimeImage = (buffer) => ({ jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }[sniffImage(buffer)] ?? 'image/jpeg');
+  const imagePourIa = (buffer) => ({ buffer, mime: mimeImage(buffer) });
+
+  /** Photos des annonces des autres comptes (celles des messages n'en font jamais partie). */
+  function candidatsPour(proprietaireId) {
+    const liste = [];
+    for (const annonce of annonces) {
+      if (annonce.proprietaireId === proprietaireId) continue;
+      for (const photo of annonce.photos) {
+        const empreinte = empreintes[nomPhoto(photo)];
+        if (empreinte) liste.push({ photo, annonce, empreinte });
+      }
+    }
+    return liste;
+  }
+
+  async function chercherCorrespondance(buffer, proprietaireId) {
+    const proches = chercherProches(await analyserImage(buffer), candidatsPour(proprietaireId));
+    if (!proches.length) return null;
+    const resultat = (niveau, cible, raison = '') => ({
+      niveau, raison, photoCible: cible.photo, annonceCibleId: cible.annonce.id, annonceCibleTitre: cible.annonce.titre, distance: cible.distance,
+    });
+    const meilleur = proches[0];
+    if (meilleur.exact || meilleur.distance <= SEUIL_CERTAIN) return resultat('certaine', meilleur);
+    // Sans avis de l'IA, une simple ressemblance ne suffit pas à refuser.
+    for (const proche of proches.slice(0, 2)) {
+      let verdict = null;
+      try { verdict = await arbitrer(imagePourIa(buffer), imagePourIa(await readFile(path.join(photoDir, nomPhoto(proche.photo))))); } catch { /* fichier absent */ }
+      if (verdict && estConfirme(verdict)) return resultat('confirmee_ia', proche, verdict.raison);
+    }
+    return null;
+  }
+
+  /** Refuse la publication si une photo de [liste] est déjà utilisée par un autre compte. */
+  async function refuserPhotoDejaPubliee(liste, proprietaireId) {
+    for (const photo of liste) {
+      let buffer;
+      try { buffer = await readFile(path.join(photoDir, nomPhoto(photo))); } catch { continue; }
+      if (!await chercherCorrespondance(buffer, proprietaireId)) continue;
+      await deletePhotos(liste.filter((p) => !annonces.some((a) => a.photos.includes(p))));
+      await store.save('photos');
+      fail(409, 'photo_deja_publiee', 'Cette photo est déjà utilisée dans une autre annonce : changez-la pour publier.');
+    }
+  }
+
+  // Empreintes des photos déjà en ligne avant l'arrivée du détecteur.
+  let empreintesAjoutees = 0;
+  for (const nom of annonces.flatMap((annonce) => annonce.photos).map(nomPhoto).filter((nom) => nom && !empreintes[nom])) {
+    try {
+      const { sha256, phash } = await analyserImage(await readFile(path.join(photoDir, nom)));
+      empreintes[nom] = { sha256, phash };
+      empreintesAjoutees++;
+    } catch { /* fichier absent */ }
+  }
+  if (empreintesAjoutees) await store.save('empreintes_photos');
 
   function freeSlots(ownerId) {
     const now = localNow();
@@ -251,7 +348,11 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
 
   const housingView = (item) => {
     const annonce = annonces.find((a) => a.id === item.propertyId);
-    return { ...item, annonceTitre: annonce?.titre ?? 'Annonce supprimée', clientNom: displayName(item.clientId), proprietaireNom: displayName(item.ownerId) };
+    // L'adresse complète n'est communiquée qu'une fois la location acceptée.
+    const logementAdresse = item.status === 'accepted' && annonce
+      ? [annonce.adresse, annonce.quartier, annonce.ville].filter(Boolean).join(', ')
+      : undefined;
+    return { ...item, annonceTitre: annonce?.titre ?? 'Annonce supprimée', clientNom: displayName(item.clientId), proprietaireNom: displayName(item.ownerId), logementAdresse };
   };
   const publishedHousing = (id, me) => {
     const annonce = findAnnonce(id, me);
@@ -260,7 +361,33 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
     return annonce;
   };
 
+  const partage = {};
+  const routesAssistant = await createAssistantRoutes({ store, users, fail, text, newId, ask: askAssistant, guides: guidesAssistant, partage });
+  const routesMessagerie = await createMessagerieRoutes({ store, users, annonces, visits, rentals, photos, photoPath: PHOTO_PATH, fail, text, newId, displayName, partage });
+
+  /** Données du serveur recopiées dans SQLite, limitées à ce que ce compte a le droit de voir. */
+  function lireServeur(me) {
+    const lesMiennes = (ligne) => ligne.ownerId === me.id || ligne.clientId === me.id;
+    const visibles = annonces.filter((a) => canSee(a, me));
+    const conversations = partage.messagerie.conversations.filter((c) => c.locataireId === me.id || c.proprietaireId === me.id);
+    return {
+      visit_availability: availability.filter((a) => a.ownerId === me.id),
+      visits: visits.filter(lesMiennes),
+      rental_requests: rentals.filter(lesMiennes),
+      annonce_likes: visibles.flatMap((a) => interactionsOf(a.id).likes.map((l) => ({ ...l, annonceId: a.id }))),
+      annonce_commentaires: visibles.flatMap((a) => interactionsOf(a.id).comments.map((c) => ({ ...c, annonceId: a.id }))),
+      annonce_avis: visibles.flatMap((a) => Object.entries(ratings[a.id] || {}).map(([userId, r]) => ({ ...r, userId, annonceId: a.id }))),
+      messagerie_conversations: conversations,
+      messagerie_messages: conversations.flatMap((c) => (partage.messagerie.messages[c.id] || []).map((m) => ({ ...m, conversationId: c.id }))),
+      assistant_conversations: partage.assistant.filter((c) => c.userId === me.id).map((c) => ({ id: c.id, userId: c.userId, updatedAt: c.updatedAt ?? c.createdAt ?? '', donnees: JSON.stringify(c) })),
+    };
+  }
+  const routesMiroir = await createMiroirRoutes({ store, fail, lireServeur });
+
   const routes = [
+    ...routesAssistant,
+    ...routesMessagerie,
+    ...routesMiroir,
     // ---------- Comptes ----------
     ['POST', /^\/auth\/register$/, false, async ({ body }) => {
       const claim = verifyToken(body.verificationToken, secret, 'email');
@@ -286,7 +413,36 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
       const user = Object.values(users).find((item) => item.email === email);
       const ok = user && typeof body.password === 'string' && await checkPassword(body.password, user.passwordHash);
       if (!ok) fail(401, 'invalid_credentials', 'Identifiants incorrects sur le serveur.');
+      ensureActive(user);
       return [200, { token: sessionToken(user), user: publicUser(user) }];
+    }],
+    // Mot de passe oublié : le jeton prouve que le code reçu par e-mail a été saisi.
+    ['POST', /^\/auth\/password-reset$/, false, async ({ body }) => {
+      const claim = verifyToken(body.verificationToken, secret, 'email');
+      if (!claim) fail(400, 'invalid_verification', 'Vérification e-mail expirée : demandez un nouveau code.');
+      const password = typeof body.password === 'string' && body.password.length >= 8 && body.password.length <= 200
+        ? body.password : fail(400, 'invalid_field', 'Mot de passe : 8 caractères minimum.');
+      const user = Object.values(users).find((item) => item.email === claim.email);
+      if (!user) fail(404, 'unknown_account', 'Aucun compte serveur pour cette adresse.');
+      user.passwordHash = await hashPassword(password);
+      user.passwordResetAt = Date.now();
+      await changed('users');
+      return [200, { updated: true }];
+    }],
+    // ---------- Administration des comptes ----------
+    ['GET', /^\/admin\/users$/, true, async ({ me }) => {
+      if (!isAdmin(me)) fail(403, 'forbidden', 'Réservé aux administrateurs.');
+      const items = Object.values(users).sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+      return [200, items.map(adminView)];
+    }],
+    ['POST', /^\/admin\/users\/([A-Za-z0-9_-]{1,100})\/statut$/, true, async ({ me, body, params }) => {
+      if (!isAdmin(me)) fail(403, 'forbidden', 'Réservé aux administrateurs.');
+      const user = users[params[0]] || fail(404, 'not_found', 'Compte introuvable.');
+      if (!['pending', 'approved', 'blocked'].includes(body.statut)) fail(400, 'invalid_field', 'Statut invalide.');
+      if (adminEmails.has(user.email)) fail(409, 'admin_account', 'Le statut d’un administrateur ne peut pas être modifié.');
+      user.accountStatus = body.statut;
+      await changed('users');
+      return [200, adminView(user)];
     }],
     ['GET', /^\/me$/, true, async ({ me }) => [200, publicUser(me)]],
     // Changement de mot de passe : l'ancien mot de passe est exigé.
@@ -316,8 +472,17 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
       await mkdir(photoDir, { recursive: true });
       await writeFile(path.join(photoDir, name), buffer);
       photos[name] = { ownerId: me.id, createdAt: new Date().toISOString() };
-      await store.save('photos');
+      const { sha256, phash } = await analyserImage(buffer);
+      empreintes[name] = { sha256, phash };
+      await Promise.all([store.save('photos'), store.save('empreintes_photos')]);
       return [201, { path: `/photos/${name}` }];
+    }],
+    // Vérification dès l'ajout dans le formulaire ; rien n'est conservé.
+    ['POST', /^\/photos\/verifier$/, true, async ({ me, req }) => {
+      const buffer = await readBody(req, 6 * 1024 * 1024);
+      if (!sniffImage(buffer)) fail(415, 'unsupported_photo', 'Format photo non supporté (JPEG, PNG ou WebP).');
+      const correspondance = await chercherCorrespondance(buffer, me.id);
+      return [200, { correspondance: correspondance ? correspondancePublique(correspondance) : null }];
     }],
 
     // ---------- Annonces ----------
@@ -330,8 +495,12 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
       return [200, { me: { id: me.id, role: me.role, moderation }, items }, { etag }];
     }],
     ['POST', /^\/annonces$/, true, async ({ me, body }) => {
+      // Envoi rejoué depuis la file hors ligne : l'annonce n'est pas créée deux fois.
+      const dejaCreee = annonces.find((a) => a.id === body.legacyId && a.proprietaireId === me.id);
+      if (dejaCreee) return [200, view(dejaCreee, me)];
       const data = validateAnnonce(body, me, null);
       const datePublication = parsePublication(body.datePublication) ?? null;
+      await refuserPhotoDejaPubliee(data.photos, me.id);
       const legacy = typeof body.legacyId === 'string' && ID.test(body.legacyId) && !annonces.some((a) => a.id === body.legacyId);
       const now = new Date().toISOString();
       const immediate = !moderation || isAdmin(me) ? 'publiee' : 'enAttente';
@@ -350,6 +519,7 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
       const data = validateAnnonce(body, me, annonce);
       const datePublication = annonce.proprietaireId === me.id ? parsePublication(body.datePublication) : undefined;
       const removed = annonce.photos.filter((photo) => !data.photos.includes(photo));
+      await refuserPhotoDejaPubliee(data.photos.filter((photo) => !annonce.photos.includes(photo)), annonce.proprietaireId);
       Object.assign(annonce, data, { updatedAt: new Date().toISOString() });
       if (moderation && !isAdmin(me) && !['archivee', 'programmee'].includes(annonce.statut)) { annonce.statut = 'enAttente'; annonce.motifModeration = ''; }
       if (datePublication) {
@@ -594,7 +764,7 @@ export async function createAnnoncesApi({ dataDir, secret, adminEmails }) {
         try {
           await publierEchues();
           const me = needsAuth ? authenticate(req) : null;
-          const body = ['POST', 'PUT'].includes(method) && pathname !== '/photos' ? await readJson(req) : {};
+          const body = ['POST', 'PUT'].includes(method) && !['/photos', '/photos/verifier'].includes(pathname) ? await readJson(req) : {};
           const result = await handler({ req, res, me, body, params: match.slice(1) });
           if (result) respond(res, result[0], result[1], result[2]);
         } catch (error) {

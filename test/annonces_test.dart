@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:studenthub/models/annonce.dart';
 import 'package:studenthub/providers/annonce_provider.dart';
 import 'package:studenthub/services/annonce_cache_service.dart';
+import 'package:studenthub/services/annonce_file_service.dart';
 import 'package:studenthub/services/annonce_service.dart';
 import 'package:studenthub/services/api_client.dart';
 
@@ -53,7 +54,7 @@ class _FakeService extends AnnonceService {
 
   @override
   Future<void> aimer(String id, bool aime) async {
-    if (failLike) throw const ApiException('Serveur injoignable');
+    if (failLike) throw const ApiException('Refusé', status: 409);
   }
 }
 
@@ -69,6 +70,12 @@ class _CacheMemoire extends AnnonceCacheService {
   Future<bool> aDesProgrammees(String userId) async => false;
   @override
   Future<void> vider() async {}
+}
+
+/// File d'envoi sans base de données.
+class _FileMemoire extends AnnonceFileService {
+  @override
+  Future<List<OperationAnnonce>> lister(String userId) async => const [];
 }
 
 Future<void> _settle() => Future<void>.delayed(Duration.zero);
@@ -95,7 +102,7 @@ void main() {
 
   test('Provider : chargement, ETag 304, like optimiste annulé en cas d’échec', () async {
     final service = _FakeService();
-    final provider = AnnonceProvider(service: service, cache: _CacheMemoire(), intervalle: const Duration(hours: 1));
+    final provider = AnnonceProvider(service: service, cache: _CacheMemoire(), file: _FileMemoire(), intervalle: const Duration(hours: 1));
     provider.utilisateur('me');
     await _settle();
     await _settle();

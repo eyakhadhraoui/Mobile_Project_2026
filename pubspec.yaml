@@ -47,6 +47,7 @@ dependencies:
   crypto: ^3.0.8
   flutter_map: ^8.3.2
   latlong2: ^0.10.1
+  cached_network_image: ^4.0.6
 
 dev_dependencies:
   flutter_test:
@@ -70,6 +71,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/modele_prix.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -17,6 +17,9 @@ class AnnonceCacheService {
 
   final DatabaseHelper _databaseHelper;
 
+  /// Base utilisée, partagée avec la file d'envoi.
+  DatabaseHelper get databaseHelper => _databaseHelper;
+
   /// Remplace tout le cache par [annonces] (liste reçue pour [userId]).
   Future<void> remplacer(String userId, List<Annonce> annonces) async {
     final db = await _databaseHelper.database;
